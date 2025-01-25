@@ -1,0 +1,1499 @@
+--- File: /home/sk/Desktop/Astro Talk/client/.env.local ---
+
+NEXT_PUBLIC_BACKEND_URL=https://jyotishconnect.onrender.com
+# NEXT_PUBLIC_BACKEND_URL=http://localhost:7000
+
+--- File: /home/sk/Desktop/Astro Talk/client/middleware.ts ---
+
+// /client/middleware.ts
+
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+export function middleware(request: NextRequest) {
+  const token = request.cookies.get('access_token')?.value;
+
+  if (!token) {
+    const loginUrl = new URL('/auth/login', request.url);
+    loginUrl.searchParams.set('redirectUrl', request.nextUrl.pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: [
+    '/chat-with-astrologer/:path*',      
+  ],
+};
+
+
+--- File: /home/sk/Desktop/Astro Talk/client/types/astrologer.ts ---
+
+export interface User {
+    _id: string;
+    name: string;
+    avatar: string;
+  }
+  
+  export interface Specialization {
+    specialization: {
+      name: string;
+    };
+  }
+  
+  export interface Ratings {
+    average: number;
+  }
+  
+  export interface AstrologerData {
+    _id: string;
+    userId: User;
+    specializations: Specialization[];
+    languages: string[];
+    experience: number;
+    costPerMinute: number;
+    ratings?: Ratings;
+  }
+  
+
+--- File: /home/sk/Desktop/Astro Talk/client/redux/userSlice.ts ---
+
+import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
+import { RootState } from './store';
+
+interface UserState {
+  user: any | null;
+  loading: boolean;
+  error: string | null;
+}
+
+const initialState: UserState = {
+  user: null,
+  loading: false,
+  error: null,
+};
+
+// 1) Async thunk for signing up
+export const signupUser = createAsyncThunk(
+  'user/signup',
+  async (
+    payload: { firstName: string; lastName: string; email: string; password: string },
+    { rejectWithValue }
+  ) => {
+    try {
+      // Make your POST request to /api/v1/signup (or whatever endpoint)
+      // For demonstration, we’ll do a fetch
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/v1/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        return rejectWithValue(error.message);
+      }
+      const data = await response.json();
+      return data; // this is the user object from the server
+    } catch (error: any) {
+      return rejectWithValue(error?.message || 'Something went wrong');
+    }
+  }
+);
+
+export const signupAstrologer = createAsyncThunk(
+  'user/signupAstrologer',
+  async (
+    payload: {
+      name: string;
+      username: string;
+      email: string;
+      password: string;
+      languages: string[];
+      experience: number;
+      costPerMinute: number;
+      about: string;
+    },
+    { rejectWithValue }
+  ) => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/v1/signup-astrologer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        return rejectWithValue(error.message);
+      }
+      const data = await response.json();
+      return data; // user data
+    } catch (error: any) {
+      return rejectWithValue(error?.message || 'Something went wrong');
+    }
+  }
+);
+
+
+// 2) Async thunk for logging in
+export const loginUser = createAsyncThunk(
+  'user/login',
+  async (
+    payload: { email: string; password: string },
+    { rejectWithValue }
+  ) => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/v1/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include', // important if your server sets a HttpOnly cookie
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        return rejectWithValue(error.message);
+      }
+      const data = await response.json();
+      return data; // user object
+    } catch (error: any) {
+      return rejectWithValue(error?.message || 'Something went wrong');
+    }
+  }
+);
+
+// 3) Async thunk for signing out
+export const signoutUser = createAsyncThunk(
+  'user/signout',
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/v1/signout`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        return rejectWithValue(error.message);
+      }
+      // Could return a message or something
+      const data = await response.json();
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(error?.message || 'Something went wrong');
+    }
+  }
+);
+
+export const fetchCurrentUser = createAsyncThunk(
+  "user/fetchCurrentUser",
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/v1/users/profile`, {
+        credentials: "include", // important so cookies are sent
+      });
+      if (!response.ok) {
+        return rejectWithValue("Not logged in or cannot fetch profile");
+      }
+      const userData = await response.json();
+      return userData;
+    } catch (err: any) {
+      return rejectWithValue(err.message);
+    }
+  }
+);
+
+export const userSlice = createSlice({
+  name: 'user',
+  initialState,
+  reducers: {
+    // For any synchronous reducers if needed
+    setUser: (state, action: PayloadAction<any>) => {
+      state.user = action.payload;
+    },
+  },
+  extraReducers: (builder) => {
+    // ============== SIGNUP THUNKS ==============
+    builder.addCase(signupUser.pending, (state) => {
+      state.loading = true;
+      state.error = null;
+    });
+    builder.addCase(signupUser.fulfilled, (state, { payload }) => {
+      state.loading = false;
+      state.user = payload;
+      state.error = null;
+    });
+    builder.addCase(signupUser.rejected, (state, action) => {
+      state.loading = false;
+      state.error = action.payload as string;
+    });
+
+    builder.addCase(signupAstrologer.pending, (state) => {
+      state.loading = true;
+      state.error = null;
+    });
+    builder.addCase(signupAstrologer.fulfilled, (state, { payload }) => {
+      state.loading = false;
+      state.user = payload;
+      state.error = null;
+    });
+    builder.addCase(signupAstrologer.rejected, (state, action) => {
+      state.loading = false;
+      state.error = action.payload as string;
+    });
+    
+
+    // ============== LOGIN THUNKS ==============
+    builder.addCase(loginUser.pending, (state) => {
+      state.loading = true;
+      state.error = null;
+    });
+    builder.addCase(loginUser.fulfilled, (state, { payload }) => {
+      state.loading = false;
+      state.user = payload;
+      state.error = null;
+    });
+    builder.addCase(loginUser.rejected, (state, action) => {
+      state.loading = false;
+      state.error = action.payload as string;
+    });
+
+    // ============== SIGNOUT THUNKS ==============
+    builder.addCase(signoutUser.pending, (state) => {
+      state.loading = true;
+      state.error = null;
+    });
+    builder.addCase(signoutUser.fulfilled, (state) => {
+      state.loading = false;
+      state.user = null;
+      state.error = null;
+    });
+    builder.addCase(signoutUser.rejected, (state, action) => {
+      state.loading = false;
+      state.error = action.payload as string;
+    });
+
+    // Then handle in extraReducers
+    builder
+      .addCase(fetchCurrentUser.fulfilled, (state, { payload }) => {
+        state.user = payload;
+        state.loading = false;
+        state.error = null;
+      })
+      .addCase(fetchCurrentUser.rejected, (state, { payload }) => {
+        state.user = null;    // means not logged in or error
+        state.loading = false;
+        state.error = payload as string;
+      })
+      .addCase(fetchCurrentUser.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      });
+  },
+});
+
+export const { setUser } = userSlice.actions;
+
+export const selectUser = (state: RootState) => state.user.user;
+export const selectLoading = (state: RootState) => state.user.loading;
+export const selectError = (state: RootState) => state.user.error;
+
+
+--- File: /home/sk/Desktop/Astro Talk/client/redux/Providers.tsx ---
+
+"use client";
+
+import { Provider } from "react-redux";
+import { store } from "./store";
+
+export function ReduxProvider({ children }: { children: React.ReactNode }) {
+  return <Provider store={store}>{children}</Provider>;
+}
+
+
+--- File: /home/sk/Desktop/Astro Talk/client/redux/store.ts ---
+
+import { configureStore } from '@reduxjs/toolkit';
+import { userSlice } from './userSlice';
+import chatUIReducer from './chatSlice'; 
+
+export const store = configureStore({
+  reducer: {
+    user: userSlice.reducer,
+    chatUI: chatUIReducer,     
+  },
+});
+
+export type RootState = ReturnType<typeof store.getState>;
+export type AppDispatch = typeof store.dispatch;
+
+
+--- File: /home/sk/Desktop/Astro Talk/client/redux/hooks.ts ---
+
+import { TypedUseSelectorHook, useDispatch, useSelector } from 'react-redux';
+import type { RootState, AppDispatch } from './store'; 
+
+export const useAppDispatch = () => useDispatch<AppDispatch>();
+export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
+
+
+--- File: /home/sk/Desktop/Astro Talk/client/redux/chatSlice.ts ---
+
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { RootState } from './store';
+
+interface ConnectingAstrologer {
+  id: string;
+  name: string;
+}
+
+interface ChatUIState {
+  connectingAstrologer: ConnectingAstrologer | null; 
+}
+
+const initialState: ChatUIState = {
+  connectingAstrologer: null
+};
+
+export const chatSlice = createSlice({
+  name: 'chatUI',
+  initialState,
+  reducers: {
+    setConnectingAstrologer: (
+      state,
+      action: PayloadAction<ConnectingAstrologer>
+    ) => {
+      state.connectingAstrologer = action.payload;
+    },
+    clearConnectingAstrologer: (state) => {
+      state.connectingAstrologer = null;
+    },
+  },
+});
+
+export const { setConnectingAstrologer, clearConnectingAstrologer } = chatSlice.actions;
+
+export const selectConnectingAstrologer = (state: RootState) =>
+  state.chatUI.connectingAstrologer;
+
+export default chatSlice.reducer;
+
+
+--- File: /home/sk/Desktop/Astro Talk/client/app/layout.tsx ---
+
+import type { Metadata } from 'next'
+import { Roboto } from 'next/font/google'
+import './globals.css'
+import { ReduxProvider } from '@/redux/Providers'
+import GlobalConnectingPopup from '@/components/GlobalConnectingPopup';
+import AuthLoader from '@/components/AuthLoader';  // Import the AuthLoader
+
+const roboto = Roboto({ 
+  subsets: ['latin'],
+  weight: ['300', '400', '500', '700'],
+  variable: '--font-roboto',
+});
+
+export const metadata: Metadata = {
+  title: 'AstroTalk - Modern Vedic Astrology Platform',
+  description: 'Connect with top astrologers for personalized Vedic readings and spiritual guidance',
+}
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <html lang="en" className="scroll-smooth">
+      <body className={`${roboto.variable} font-sans`}>
+        <ReduxProvider>
+          <AuthLoader>
+            <GlobalConnectingPopup />
+            {children}
+          </AuthLoader>
+        </ReduxProvider>
+      </body>
+    </html>
+  )
+}
+
+--- File: /home/sk/Desktop/Astro Talk/client/app/page.tsx ---
+
+import { Header } from '@/components/header'
+import { HeroSection } from '@/components/sections/hero'
+import { ServicesSection } from '@/components/sections/services'
+import { TestimonialsSection } from '@/components/sections/testimonials'
+import { AstrologersSection } from '@/components/sections/astrologers'
+import { BlogSection } from '@/components/sections/blog'
+import { CTASection } from '@/components/sections/cta'
+import { Footer } from '@/components/footer'
+
+export default function Home() {
+  return (
+    <div className="min-h-screen">
+      <Header />
+      <main>
+        <HeroSection />
+        <ServicesSection />
+        <TestimonialsSection />
+        <AstrologersSection />
+        <BlogSection />
+        <CTASection />
+      </main>
+      <Footer />
+    </div>
+  )
+}
+
+
+
+--- File: /home/sk/Desktop/Astro Talk/client/lib/utils.ts ---
+
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
+
+
+--- File: /home/sk/Desktop/Astro Talk/server/index.js ---
+
+const express = require("express");
+const dotenv = require('dotenv');
+const cors = require('cors');
+const cookieParser = require("cookie-parser");
+const mongoose = require("mongoose");
+const http = require('http');
+const initializeSocket = require('./socket/socket');
+
+// Load environment variables
+dotenv.config(); 
+const PORT = process.env.PORT || 3000; 
+
+// Initialize express app
+const app = express();
+
+// Create HTTP server with Express app
+const server = http.createServer(app);
+
+// Initialize Socket.IO
+const io = initializeSocket(server);
+
+// ============== DB Connection =============
+mongoose.connect(process.env.MONGODB_URL, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log("db connected successfully"))
+.catch((err) => {
+  console.log("err in connecting to database", err);
+  process.exit(1);
+});
+
+// ============== Middlewares =============
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true,
+  methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+}));
+
+app.use(express.json({ limit: '50mb' })); 
+app.use(cookieParser());
+
+// ============== Routes =============
+// Auth Routes
+const authRouter = require('./routes/auth.routes');
+const userRouter = require('./routes/user.routes');
+
+app.use('/api/v1', authRouter);
+app.use('/api/v1/users', userRouter);
+
+// Astrologer Routes
+const astrologerRouter = require('./routes/astrologer.routes');
+app.use('/api/v1/astrologers', astrologerRouter);
+
+// Review Routes
+const reviewRouter = require('./routes/review.routes');
+app.use('/api/v1/reviews', reviewRouter);
+
+// Chat Routes
+const chatRouter = require('./routes/chat.routes');
+app.use('/api/v1/chat', chatRouter);
+
+// Start the server
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+--- File: /home/sk/Desktop/Astro Talk/server/.env ---
+
+PORT = 7000
+MONGODB_URL="mongodb+srv://Satyam21092:cd2aNoCf5MtuE26q@cluster1.w3gyq5v.mongodb.net/Astrologer"
+JWT_SECRET = satyam
+
+
+--- File: /home/sk/Desktop/Astro Talk/server/middlewares/auth.js ---
+
+const jwt = require("jsonwebtoken");
+require("dotenv").config();
+
+module.exports.isUser = (req,res,next) =>{
+    try {
+        if(req.user.role !== "User"){
+            return res.status(401).json({
+                success:false,
+                message:"only Users have access"
+            })
+        }
+        next();
+    } catch (error) {
+        return res.status(500).json({
+            success:false,
+            message:"user role is not matching",
+        })
+    }
+    
+}
+
+module.exports.isAstrologer = (req,res,next) =>{
+    try {
+        if(req.user.role !== "Astrologer"){
+            return res.status(401).json({
+                success:false,
+                message:"only Astrologer have access"
+            })
+        }
+        next();
+    } catch (error) {
+        return res.status(500).json({
+            success:false,
+            message:"user role is not matching",
+        })
+    }
+    
+}
+
+module.exports.isAdmin = (req,res,next) =>{
+    try {
+        if(req.user.role !== "Admin"){
+            return res.status(401).json({
+                success:false,
+                message:"only Admin have access"
+            })
+        }
+        next();
+    } catch (error) {
+        return res.status(500).json({
+            success:false,
+            message:"user role is not matching",
+        })
+    }
+    
+}
+
+module.exports.isAdminOrAstrologer = (req, res, next) => {
+    try {
+      const userRole = req.user.role;
+      if (userRole === "Admin" || userRole === "Astrologer") {
+        return next();
+      }
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Only Admins or Astrologers allowed."
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Role verification failed."
+      });
+    }
+  };
+  
+
+--- File: /home/sk/Desktop/Astro Talk/server/controllers/chat.controller.js ---
+
+const Chat = require('../models/chat.model');
+const User = require('../models/user.model');
+const errorHandler = require('../utils/error');
+
+/**
+ * POST /api/v1/chat/init
+ * Body: { astrologerId, userDetails: { name, gender, date, time, place } }
+ */
+exports.initChat = async (req, res, next) => {
+  try {
+    const { astrologerId, userDetails } = req.body;
+    const userId = req.user.id; // from verifyToken
+
+    // Check if the astrologer (which is also stored in user collection) exists
+    const astrologerUser = await User.findById(astrologerId);
+    if (!astrologerUser) {
+      return next(errorHandler(404, 'Astrologer user not found'));
+    }
+    
+    // 1) Find existing Chat or create a new one
+    let chat = await Chat.findOne({ userId, astrologerId });
+    if (!chat) {
+      chat = new Chat({
+        userId,
+        astrologerId,
+        messages: [],
+      });
+      await chat.save();
+    }
+
+    // 2) Insert system message with user details
+    const astrologerName = astrologerUser.name;
+    const { name, gender, date, time, place } = userDetails;
+    const systemMessage = {
+      sender: userId, 
+      content: `Hi ${astrologerName},\nBelow are my details:\nName: ${name}\nGender: ${gender}\nDOB: ${date}\nTOB: ${time}\nPOB: ${place}`,
+      type: 'system',
+    };
+    
+    chat.messages.push(systemMessage);
+    await chat.save();
+
+    return res.status(200).json({
+      success: true,
+      chatId: chat._id,
+      message: 'Chat initialized with user details.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+exports.getUserChats = async (req, res, next) => {
+  try {
+    const chats = await Chat.find({
+      $or: [
+        { userId: req.user.id },
+        { astrologerId: req.user.id }
+      ]
+    })
+      .populate('userId', 'name avatar')
+      .populate('astrologerId', 'name avatar')
+      .sort('-updatedAt');
+    
+    res.status(200).json(chats);
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getChatMessages = async (req, res, next) => {
+  try {
+    const chat = await Chat.findById(req.params.chatId)
+      .populate('userId', 'name avatar')
+      .populate('astrologerId', 'name avatar')
+      .populate('messages.sender', 'name avatar');
+    
+    if (!chat) {
+      return next(errorHandler(404, 'Chat not found'));
+    }
+
+    // Check if user has access to this chat
+    if (
+      chat.userId._id.toString() !== req.user.id && 
+      chat.astrologerId._id.toString() !== req.user.id
+    ) {
+      return next(errorHandler(403, 'Access denied'));
+    }
+
+    res.status(200).json(chat);
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+--- File: /home/sk/Desktop/Astro Talk/server/controllers/user.controller.js ---
+
+const bcryptjs = require('bcryptjs');
+const User = require('../models/user.model.js');
+const errorHandler = require('../utils/error');
+
+module.exports.getUser = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const { password, ...rest } = user._doc;
+    res.status(200).json(rest);
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+module.exports.updateUser = async (req, res, next) => {
+  try {
+    if (req.body.password) {
+      req.body.password = bcryptjs.hashSync(req.body.password, 10);
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user.id,
+      {
+        $set: {
+          username: req.body.username,
+          email: req.body.email,
+          password: req.body.password,
+          avatar: req.body.avatar,
+        },
+      },
+      { new: true }
+    );
+
+    const { password, ...rest } = updatedUser._doc;
+    res.status(200).json(rest);
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+module.exports.deleteUser = async (req, res, next) => {
+  try {
+    await User.findByIdAndDelete(req.user.id);
+    res.clearCookie('access_token');
+    res.status(200).json('User has been deleted!');
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Admin Conrollers
+
+exports.searchProfiles = async (req, res, next) => {
+  try {
+    const { query } = req.query;
+    if (!query) {
+      return next(errorHandler(400, 'Query parameter is required'));
+    }
+    // Search across name, username, and email (case-insensitive)
+    const regex = new RegExp(query, 'i');
+    const users = await User.find({
+      $or: [
+        { name: regex },
+        { username: regex },
+        { email: regex }
+      ]
+    }).select('-password');
+
+    res.status(200).json(users);
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.listAllProfiles = async (req, res, next) => {
+  try {
+    const users = await User.find().select('-password');
+    res.status(200).json(users);
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getProfileById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id).select('-password');
+    if (!user) {
+      return next(errorHandler(404, 'User not found'));
+    }
+    res.status(200).json(user);
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.deleteProfileById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findByIdAndDelete(id);
+    if (!user) {
+      return next(errorHandler(404, 'User not found'));
+    }
+    res.status(200).json({ message: 'User deleted successfully' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+--- File: /home/sk/Desktop/Astro Talk/server/controllers/astrologer.controller.js ---
+
+const Astrologer = require('../models/astrologer.model');
+const Specialization = require('../models/specialization.model');
+const errorHandler = require('../utils/error');
+const Review = require('../models/review.model');
+
+exports.listAstrologers = async (req, res, next) => {
+  try {
+    const {
+      specialization,
+      language,
+      minExperience,
+      maxCost,
+      status,
+      verified,
+      tag
+    } = req.query;
+
+    const query = {};
+
+    if (specialization) {
+      query.specializations = specialization;
+    }
+    if (language) {
+      query.languages = language;
+    }
+    if (minExperience) {
+      query.experience = { $gte: parseInt(minExperience) };
+    }
+    if (maxCost) {
+      query.costPerMinute = { $lte: parseInt(maxCost) };
+    }
+    if (status === 'online') {
+      query.$or = [
+        { chatStatus: 'online' },
+        { callStatus: 'online' }
+      ];
+    }
+    if (verified) {
+      query.verification = 'verified';
+    }
+    if (tag) {
+      query.tag = tag;
+    }
+
+    // Get astrologers with basic info
+    const astrologers = await Astrologer.find(query)
+      .populate('userId', 'name avatar')
+      .populate('specializations.specialization')
+      .select('-__v');
+
+    // Get ratings for all astrologers
+    const astrologersWithRatings = await Promise.all(
+      astrologers.map(async (astrologer) => {
+        const reviews = await Review.find({ astrologerId: astrologer._id });
+        
+        const ratingStats = {
+          average: 0,
+          total: reviews.length,
+          distribution: {
+            1: 0, 2: 0, 3: 0, 4: 0, 5: 0
+          }
+        };
+
+        reviews.forEach(review => {
+          ratingStats.distribution[review.rating]++;
+        });
+
+        if (reviews.length > 0) {
+          ratingStats.average = Number((reviews.reduce((acc, review) => 
+            acc + review.rating, 0) / reviews.length).toFixed(1));
+        }
+
+        // Convert to plain object to allow adding new properties
+        const astrologerObj = astrologer.toObject();
+        astrologerObj.ratings = ratingStats;
+
+        return astrologerObj;
+      })
+    );
+
+    res.status(200).json(astrologersWithRatings);
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getAstrologerProfile = async (req, res, next) => {
+  try {
+    const astrologer = await Astrologer.findById(req.params.id)
+      .populate('userId', 'name avatar')
+      .populate('specializations.specialization');
+
+    if (!astrologer) {
+      return next(errorHandler(404, 'Astrologer not found'));
+    }
+
+    const reviews = await Review.find({ astrologerId: req.params.id })
+      .populate('userId', 'name avatar')
+      .sort({ createdAt: -1 });
+
+    const ratingStats = {
+      average: 0,
+      total: reviews.length,
+      distribution: {
+        1: 0, 2: 0, 3: 0, 4: 0, 5: 0
+      }
+    };
+
+    reviews.forEach(review => {
+      ratingStats.distribution[review.rating]++;
+    });
+
+    if (reviews.length > 0) {
+      ratingStats.average = reviews.reduce((acc, review) => acc + review.rating, 0) / reviews.length;
+    }
+
+    res.status(200).json({
+      astrologer,
+      reviews,
+      ratingStats
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.updateAstrologerProfile = async (req, res, next) => {
+  try {
+    const { astrologerId } = req.params;
+
+    const astrologer = await Astrologer.findById(astrologerId);
+    if (!astrologer) {
+      return next(errorHandler(404, 'Astrologer not found'));
+    }
+
+    if (req.body.specializations) {
+      for (const spec of req.body.specializations) {
+        const specializationExists = await Specialization.findById(spec.specialization);
+        if (!specializationExists) {
+          return next(errorHandler(404, `Specialization ${spec.specialization} not found`));
+        }
+      }
+
+      astrologer.specializations = req.body.specializations;
+    }
+
+    for (let key in req.body) {
+      if (key !== 'specializations' && req.body.hasOwnProperty(key)) {
+        astrologer[key] = req.body[key];
+      }
+    }
+
+    await astrologer.save();
+
+    const updatedAstrologer = await Astrologer.findById(astrologerId)
+      .populate('specializations.specialization')
+      .populate('userId', 'name avatar');
+
+    res.status(200).json(updatedAstrologer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+--- File: /home/sk/Desktop/Astro Talk/server/utils/verifyUser.js ---
+
+const jwt = require('jsonwebtoken');
+
+const verifyToken = (req, res, next) => {
+  
+  let token = req.cookies.access_token;
+
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: 'Access token is missing',
+    });
+  }
+
+  // Verify token
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(403).json({
+      success: false,
+      message: error,
+    });
+  }
+};
+
+module.exports = verifyToken;
+
+
+--- File: /home/sk/Desktop/Astro Talk/server/utils/error.js ---
+
+const errorHandler = (statusCode, message) => {
+    const error = new Error();
+    error.statusCode = statusCode;
+    error.message = message;
+    return error;
+};
+
+module.exports = errorHandler;
+
+--- File: /home/sk/Desktop/Astro Talk/server/socket/socket.js ---
+
+const socketIO = require('socket.io');
+const jwt = require('jsonwebtoken');
+
+// Import our separated socket handlers
+const setupCallHandlers = require('./call.socket');
+const setupChatHandlers = require('./chat.socket');
+
+function initializeSocket(server) {
+  const io = socketIO(server, {
+    cors: {
+      origin: "http://localhost:3000",
+      methods: ["GET", "POST"],
+      credentials: true
+    }
+  });
+
+  // Store online users
+  const onlineUsers = new Map();
+
+  // Middleware to parse token from cookie
+  io.use((socket, next) => {
+    try {
+      const rawCookie = socket.handshake.headers.cookie || '';
+      const cookieName = 'access_token=';
+      const startIndex = rawCookie.indexOf(cookieName);
+      if (startIndex === -1) throw new Error('No token cookie');
+
+      // Extract the token from the cookie string
+      const tokenValue = rawCookie
+        .slice(startIndex + cookieName.length)
+        .split(';')[0];
+
+      const decoded = jwt.verify(tokenValue, process.env.JWT_SECRET);
+      socket.user = decoded;
+      next();
+    } catch (err) {
+      next(new Error('Authentication error'));
+    }
+  });
+
+
+  io.on('connection', (socket) => {
+    console.log(`User connected: ${socket.user.id}`);
+
+    // Add user to the Map
+    onlineUsers.set(socket.user.id, {
+      socketId: socket.id,
+      userId: socket.user.id,
+      role: socket.user.role,
+    });
+
+    // If astrologer, broadcast status
+    if (socket.user.role === 'Astrologer') {
+      io.emit('astrologerStatusUpdate', {
+        astrologerId: socket.user.id,
+        status: 'online'
+      });
+    }
+
+    // ======================
+    // REGISTER HANDLERS
+    // ======================
+    setupCallHandlers(io, socket, onlineUsers);
+    setupChatHandlers(io, socket, onlineUsers);
+
+    // On disconnect
+    socket.on('disconnect', () => {
+      onlineUsers.delete(socket.user.id);
+      if (socket.user.role === 'Astrologer') {
+        io.emit('astrologerStatusUpdate', {
+          astrologerId: socket.user.id,
+          status: 'offline'
+        });
+      }
+    });
+  });
+
+  return io;
+}
+
+module.exports = initializeSocket;
+
+
+--- File: /home/sk/Desktop/Astro Talk/server/socket/call.socket.js ---
+
+module.exports = function setupCallHandlers(io, socket, onlineUsers) {
+    // =============== CALL EVENTS ===============
+    socket.on('callUser', ({ recipientId, signalData, callType, callerName }) => {
+      console.log(`Call initiated by ${socket.user.id} to ${recipientId}`);
+  
+      const recipientSocket = [...onlineUsers.values()]
+        .find(u => u.userId === recipientId)?.socketId;
+  
+      if (recipientSocket) {
+        io.to(recipientSocket).emit('incomingCall', {
+          callerId: socket.user.id,
+          callerName,
+          signalData,
+          callType
+        });
+      }
+    });
+  
+    socket.on('answerCall', ({ callerId, signalData }) => {
+      console.log("[Server] answerCall =>", callerId);
+      const callerSocket = [...onlineUsers.values()]
+        .find(u => u.userId === callerId)?.socketId;
+  
+      if (callerSocket) {
+        io.to(callerSocket).emit('callAccepted', signalData);
+      }
+    });
+  
+    socket.on("rejectCall", ({ callerId }) => {
+      console.log("[Server] rejectCall =>", callerId);
+      const callerSocket = [...onlineUsers.values()]
+        .find(u => u.userId === callerId)?.socketId;
+  
+      if (callerSocket) {
+        io.to(callerSocket).emit('callRejected');
+      }
+    });
+  
+    socket.on("endCall", () => {
+      console.log("[Server] endCall from", socket.user.id);
+  
+      // Since we don't receive a 'targetId' in this example,
+      // we can broadcast to the other side by searching the chat participants
+      // but typically you might pass in 'targetId' too. For now, we broadcast 
+      // to all peers, or you can store a call map to know who is in the call.
+      // Here, we do something simpler: just emit "callEnded" to all
+      // in practice you'd want to identify the correct target user.
+      // For 1-to-1, you can store "caller <-> callee" mapping and send specifically.
+  
+      socket.broadcast.emit("callEnded");
+    });
+  };
+  
+
+--- File: /home/sk/Desktop/Astro Talk/server/socket/chat.socket.js ---
+
+const Chat = require('../models/chat.model');
+
+module.exports = function setupChatHandlers(io, socket, onlineUsers) {
+
+  // ============= CHAT EVENTS =============
+  socket.on('joinRoom', ({ chatId }) => {
+    socket.join(chatId);
+  });
+
+  socket.on("sendMessage", async ({ chatId, message }) => {
+    // Save message to DB
+    const chat = await Chat.findById(chatId);
+    if (!chat) return;
+
+    chat.messages.push({
+      sender: socket.user.id,
+      content: message,
+      type: "text"
+    });
+    await chat.save();
+
+    // Re-populate messages to get sender info
+    await chat.populate("messages.sender", "name avatar");
+
+    const lastMsg = chat.messages[chat.messages.length - 1];
+
+    // Broadcast message to everyone in this chat room
+    io.to(chatId).emit("newMessage", {
+      chatId,
+      message: lastMsg,
+    });
+  });
+};
+
+
+--- File: /home/sk/Desktop/Astro Talk/server/models/specialization.model.js ---
+
+const mongoose = require("mongoose");
+
+const specializationSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true
+    },
+    description: {
+      type: String,
+      required: true
+    },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model('Specialization', specializationSchema);
+
+
+--- File: /home/sk/Desktop/Astro Talk/server/models/astrologer.model.js ---
+
+const mongoose = require("mongoose");
+
+const astrologerSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      unique: true
+    },
+    tag: {
+      type: String,
+      enum: [null, 'Celebrity'],
+      default: null
+    },
+    verification: {
+      type: String,
+      enum: [null, 'verified'],
+      default: null
+    },
+    specializations: [{
+      specialization: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Specialization'
+      },
+      yearsOfExperience: {
+        type: Number,
+        required: true
+      },
+      certificates: [{
+        name: String,
+        url: String,
+        verificationStatus: {
+          type: String,
+          enum: ['pending', 'verified', 'rejected'],
+          default: 'pending'
+        }
+      }]
+    }],
+    languages: [{
+      type: String,
+      required: true
+    }],
+    experience: {
+      type: Number,
+      required: true
+    },
+    costPerMinute: {
+      type: Number,
+      required: true
+    },
+    chatMinutes: {
+      type: Number,
+      default: 0
+    },
+    callMinutes: {
+      type: Number,
+      default: 0
+    },
+    chatStatus: {
+      type: String,
+      enum: ['online', 'offline'],
+      default: 'offline'
+    },
+    callStatus: {
+      type: String,
+      enum: ['online', 'offline'],
+      default: 'offline'
+    },
+    about: {
+      type: String,
+      required: true
+    },
+    totalConsultations: {
+      type: Number,
+      default: 0
+    }
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model('Astrologer', astrologerSchema);
+
+--- File: /home/sk/Desktop/Astro Talk/server/models/chat.model.js ---
+
+const mongoose = require("mongoose");
+
+const messageSchema = new mongoose.Schema({
+  sender: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  content: {
+    type: String,
+    required: true
+  },
+  type: {
+    type: String,
+    enum: ['text', 'system'],
+    default: 'text'
+  }
+}, { timestamps: true });
+
+const chatSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    astrologerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    messages: [messageSchema],
+    status: {
+      type: String,
+      enum: ['active', 'completed'],
+      default: 'active'
+    }
+  },
+  { timestamps: true }
+);
+
+// Compound index to ensure unique user-astrologer pairs
+chatSchema.index({ userId: 1, astrologerId: 1 }, { unique: true });
+
+module.exports = mongoose.model('Chat', chatSchema);
+
+--- File: /home/sk/Desktop/Astro Talk/server/models/user.model.js ---
+
+const mongoose = require("mongoose");
+
+const userSchema = new mongoose.Schema(
+  {
+    name:{
+        type:String,
+        required:true,
+        trim:true,
+    },
+    username: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+    password: {
+      type: String,
+      required: true,
+    },
+    avatar: {
+      type: String,
+      default: "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png"
+    },
+    role:{
+        type:String,
+        default:"User",
+        enum:["Admin","User", "Astrologer"]
+    }
+  },
+  { timestamps: true }
+);
+
+userSchema.index({ username: 1, email: 1 }, { unique: true });
+
+module.exports = mongoose.model('User', userSchema);
+
+
+--- File: /home/sk/Desktop/Astro Talk/server/routes/chat.routes.js ---
+
+const express = require('express');
+const {
+  getUserChats,
+  getChatMessages,
+  initChat,  
+} = require('../controllers/chat.controller');
+const verifyToken = require('../utils/verifyUser');
+
+const router = express.Router();
+
+router.get('/list', verifyToken, getUserChats);
+router.get('/:chatId', verifyToken, getChatMessages);
+
+router.post('/init', verifyToken, initChat);
+
+module.exports = router;
+
+
+--- File: /home/sk/Desktop/Astro Talk/server/routes/astrologer.routes.js ---
+
+const express = require('express');
+const { 
+  listAstrologers, 
+  getAstrologerProfile, 
+  updateAstrologerProfile,
+  
+} = require('../controllers/astrologer.controller');
+const {
+  createSpecialization,
+  getAllSpecializations,
+  deleteSpecialization
+} = require('../controllers/specialization.controller');
+const { auth, isAstrologer, isAdmin, isAdminOrAstrologer } = require('../middlewares/auth');
+const verifyToken = require('../utils/verifyUser');
+
+const router = express.Router();
+
+// Public routes
+router.get('/list', listAstrologers);
+router.get('/:id', getAstrologerProfile);
+router.get('/specializations/list', getAllSpecializations);
+
+// Protected routes - Astrologer only
+router.put('/update/:astrologerId', verifyToken, isAstrologer, updateAstrologerProfile);
+
+// Protected routes - Admin Or Astrologer only
+router.post('/specializations/create', verifyToken, isAdminOrAstrologer, createSpecialization);
+
+// Protected routes - Admin only
+router.delete('/specializations/:id', verifyToken, isAdmin, deleteSpecialization);
+
+
+module.exports = router;
+
+--- File: /home/sk/Desktop/Astro Talk/server/routes/user.routes.js ---
+
+const express = require('express');
+const { deleteUser, updateUser, getUser, searchProfiles, listAllProfiles, getProfileById, deleteProfileById } = require('../controllers/user.controller.js');
+const verifyToken = require('../utils/verifyUser.js');
+const { isAdmin } = require('../middlewares/auth.js');
+
+const router = express.Router();
+
+router.get('/profile', verifyToken, getUser);
+router.put('/update', verifyToken, updateUser);
+router.delete('/delete', verifyToken, deleteUser);
+
+// Admin Routes Only
+router.get('/users/search',verifyToken, isAdmin, searchProfiles);
+router.get('/users',verifyToken,isAdmin, listAllProfiles);
+router.get('/users/:id',verifyToken,isAdmin, getProfileById);
+router.delete('/users/:id',verifyToken,isAdmin, deleteProfileById);
+
+module.exports = router;
+
+
