@@ -32,7 +32,7 @@ mongoose.connect(process.env.MONGODB_URL, {
 
 // ============== Middlewares =============
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: 'https://jyotish-connect.vercel.app', 
   credentials: true,
   methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization", "Accept"],
