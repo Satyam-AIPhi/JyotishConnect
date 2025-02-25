@@ -1,0 +1,2945 @@
+--- File: /home/sk/Desktop/JyotishConnect/client/app/layout.tsx ---
+
+import type { Metadata } from 'next'
+import { Roboto } from 'next/font/google'
+import './globals.css'
+import { ReduxProvider } from '@/redux/Providers'
+import GlobalConnectingPopup from '@/components/GlobalConnectingPopup';
+import AuthLoader from '@/components/AuthLoader';  // Import the AuthLoader
+import { Toaster } from "@/components/ui/toaster"
+
+const roboto = Roboto({ 
+  subsets: ['latin'],
+  weight: ['300', '400', '500', '700'],
+  variable: '--font-roboto',
+});
+
+export const metadata: Metadata = {
+  title: 'JyotishConnect - Modern Vedic Astrology Platform',
+  description: 'Connect with top astrologers for personalized Vedic readings and spiritual guidance',
+}
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <html lang="en" className="scroll-smooth">
+      <body className={`${roboto.variable} font-sans`}>
+        <ReduxProvider>
+          <AuthLoader>
+            <GlobalConnectingPopup />
+            {children}
+            <Toaster />
+          </AuthLoader>
+        </ReduxProvider>
+      </body>
+    </html>
+  )
+}
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/page.tsx ---
+
+import { Header } from '@/components/header'
+import { HeroSection } from '@/components/sections/hero'
+import { ServicesSection } from '@/components/sections/services'
+import { TestimonialsSection } from '@/components/sections/testimonials'
+import { AstrologersSection } from '@/components/sections/astrologers'
+import { BlogSection } from '@/components/sections/blog'
+import { CTASection } from '@/components/sections/cta'
+import { Footer } from '@/components/footer'
+
+export default function Home() {
+  return (
+    <div className="min-h-screen">
+      <Header />
+      <main>
+        <HeroSection />
+        <ServicesSection />
+        <TestimonialsSection />
+        <AstrologersSection />
+        <BlogSection />
+        <CTASection />
+      </main>
+      <Footer />
+    </div>
+  )
+}
+
+
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/chat-with-astrologer/layout.tsx ---
+
+"use client";
+
+import { ReactNode, useEffect, Suspense } from 'react';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import { useAppSelector, useAppDispatch } from '@/redux/hooks';
+import { selectUser, fetchCurrentUser } from '@/redux/userSlice';
+import { Loader } from '@/components/loader';
+import { fetchFilterOptions } from '@/redux/filterOptionsSlice';
+import { getCookie } from '@/lib/utils';
+
+interface ProtectedLayoutProps {
+  children: ReactNode;
+}
+
+// Child component that handles authentication logic
+function AuthChecker() {
+  const user = useAppSelector(selectUser);
+  const dispatch = useAppDispatch();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    const token = getCookie('token'); 
+
+    // If no token exists, redirect to login immediately
+    if (!token) {
+      router.push('/auth/login');
+      return;
+    }
+
+    // If token exists but the user hasn't been loaded yet, fetch the current user
+    if (!user) {
+      dispatch(fetchCurrentUser())
+        .unwrap()
+        .catch(() => {
+          const queryString = searchParams ? `?${searchParams.toString()}` : '';
+          const fullPath = `${pathname}${queryString}`;
+          router.push('/auth/login?redirectUrl=' + encodeURIComponent(fullPath));
+        });
+    }
+  }, [dispatch, user, router, pathname, searchParams]);
+
+  // Dispatch filter options irrespective of the token as part of the authenticated context
+  useEffect(() => {
+    dispatch(fetchFilterOptions());
+  }, [dispatch]);
+
+  return null;
+}
+
+export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
+  const user = useAppSelector(selectUser);
+
+  // While the user is not loaded, show a loader
+  if (!user) {
+    return <Loader />;
+  }
+
+  return (
+    <>
+      <Suspense fallback={<Loader />}>
+        <AuthChecker />
+      </Suspense>
+      {children}
+    </>
+  );
+}
+
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/chat-with-astrologer/page.tsx ---
+
+"use client";
+
+import { Suspense, useState, Fragment, useEffect } from 'react';
+import { Menu, Transition } from '@headlessui/react';
+import { ChevronDownIcon, FunnelIcon } from '@heroicons/react/20/solid';
+import { Header } from '@/components/header';
+import { Footer } from '@/components/footer';
+import { Loader } from '@/components/loader';
+import AstrologerCard from '@/components/ui/AstrologerCard';
+import AstrologerFilters from '@/components/AstrologerFilters';
+import Pagination from '@/components/Pagination';
+import { useAstrologers } from '@/hooks/useAstrologers';
+import { useAppDispatch, useAppSelector } from '@/redux/hooks';
+import classNames from 'classnames';
+import {
+  setPage,
+  setSort,
+  setSearch,
+  setMinRating,
+  setSpecializations,
+  setLanguages,
+  setMinExperience,
+  setMaxCost,
+  setStatus,
+  setVerified,
+} from '@/redux/astrologerFilterSlice';
+import { useDebouncedCallback } from 'use-debounce';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+
+const sortOptions = [
+  { name: 'Best Rating', value: 'rating' },
+  { name: 'Most Experienced', value: 'experience' },
+  { name: 'Price: Low to High', value: 'cost' },
+  { name: 'Most Consultations', value: 'consultations' },
+];
+
+export default function AstrologerListing() {
+  const { astrologers, loading, totalPages, currentPage } = useAstrologers();
+  const dispatch = useAppDispatch();
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const filters = useAppSelector((state) => state.astrologerFilters);
+
+  const debouncedSearch = useDebouncedCallback((value: string) => {
+    dispatch(setSearch(value));
+  }, 300);
+
+  useEffect(() => {
+    return () => {
+      debouncedSearch.cancel();
+    };
+  }, [debouncedSearch]);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+  
+    if (filters.search) params.set('search', filters.search);
+    if (filters.sort !== 'rating') params.set('sort', filters.sort);
+    if (filters.minRating > 0) params.set('minRating', filters.minRating.toString());
+    if (filters.specialization.length > 0) params.set('specialization', filters.specialization.join(','));
+    if (filters.language.length > 0) params.set('language', filters.language.join(','));
+    if (filters.minExperience > 0) params.set('minExperience', filters.minExperience.toString());
+    if (filters.maxCost < 500) params.set('maxCost', filters.maxCost.toString());
+    if (filters.status) params.set('status', filters.status);
+    if (filters.verified) params.set('verified', 'true');
+    if (filters.page > 1) params.set('page', filters.page.toString());
+  
+    const queryString = params.toString();
+    if (queryString) {
+      router.replace(`${pathname}?${queryString}`);
+    } else {
+      router.replace(pathname);
+    }
+  }, [filters, router, pathname]);
+
+  // Parse URL params into Redux state
+  useEffect(() => {
+    const currentSearch = searchParams.get('search') || '';
+    const currentSort = searchParams.get('sort') || 'rating';
+    const currentMinRating = Math.max(0, Number(searchParams.get('minRating')) || 0);
+    const currentSpecialization = searchParams.get('specialization')?.split(',') || [];
+    const currentLanguage = searchParams.get('language')?.split(',') || [];
+    const currentMinExperience = Math.max(0, Number(searchParams.get('minExperience')) || 0);
+    const currentMaxCost = Math.min(500, Math.max(0, Number(searchParams.get('maxCost')) || 500));
+    const currentStatus = searchParams.get('status') || '';
+    const currentVerified = searchParams.get('verified') === 'true';
+    const currentPage = Math.max(1, Number(searchParams.get('page')) || 1);
+
+    dispatch(setSearch(currentSearch));
+    dispatch(setSort(currentSort));
+    dispatch(setMinRating(currentMinRating));
+    dispatch(setSpecializations(currentSpecialization));
+    dispatch(setLanguages(currentLanguage));
+    dispatch(setMinExperience(currentMinExperience));
+    dispatch(setMaxCost(currentMaxCost));
+    dispatch(setStatus(currentStatus));
+    dispatch(setVerified(currentVerified));
+    dispatch(setPage(currentPage));
+  }, [dispatch, searchParams]);
+
+  const handlePageChange = (page: number) => {
+    dispatch(setPage(page));
+  };
+
+  const handleSortChange = (sortValue: string) => {
+    dispatch(setSort(sortValue));
+  };
+
+  return (
+    <Suspense fallback={<Loader />}>
+      <div className="min-h-screen">
+        <Header />
+        <main className="mx-auto max-w-[99%] overflow-hidden px-4 sm:px-6 lg:pl-4">
+          {/* Page Header */}
+          <div className="w-full flex items-baseline justify-between border-b border-gray-200">
+            <div className='hidden lg:block'>
+              <p className="text-2xl font-bold tracking-tight text-gray-900">/ Astrologers</p>
+            </div>
+            {/* Search Bar */}
+            <div className="my-4 w-full max-w-[60%] lg:max-w-3xl">
+              <input
+                className="block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                type="text"
+                placeholder="Search astrologers..."
+                onChange={(e) => debouncedSearch(e.target.value)}
+              />
+            </div>
+
+            <div className="flex items-center">
+              {/* Sort Menu */}
+              <Menu as="div" className="relative inline-block text-left">
+                <Menu.Button className="group inline-flex items-center justify-center text-sm font-medium text-gray-700 hover:text-gray-900">
+                  Sort By
+                  <ChevronDownIcon
+                    className="-mr-1 ml-1 h-5 w-5 text-gray-400 group-hover:text-gray-500"
+                    aria-hidden="true"
+                  />
+                </Menu.Button>
+
+                <Transition
+                  as="div"
+                  enter="transition ease-out duration-100"
+                  enterFrom="opacity-0 scale-95"
+                  enterTo="opacity-100 scale-100"
+                  leave="transition ease-in duration-75"
+                  leaveFrom="opacity-100 scale-100"
+                  leaveTo="opacity-0 scale-95"
+                >
+                  <Menu.Items className="absolute right-0 z-10 mt-2 w-40 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                    <div className="py-1">
+                      {sortOptions.map((option) => (
+                        <Menu.Item key={option.value}>
+                          {({ active }) => (
+                            <button
+                              onClick={() => handleSortChange(option.value)}
+                              className={classNames(
+                                active ? 'bg-gray-100' : '',
+                                'block w-full px-4 py-2 text-left text-sm text-gray-700'
+                              )}
+                            >
+                              {option.name}
+                            </button>
+                          )}
+                        </Menu.Item>
+                      ))}
+                    </div>
+                  </Menu.Items>
+                </Transition>
+              </Menu>
+
+              <button
+                type="button"
+                onClick={() => setMobileFiltersOpen(true)}
+                className="-m-2 ml-4 p-2 text-gray-400 hover:text-gray-500 lg:hidden"
+              >
+                <FunnelIcon className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+
+          <div className="lg:flex">
+            {/* Desktop Filters */}
+            <div className="hidden lg:block lg:w-[20%] lg:mr-4">
+              <AstrologerFilters
+                mobileFiltersOpen={mobileFiltersOpen}
+                setMobileFiltersOpen={setMobileFiltersOpen}
+              />
+            </div>
+            {/* Main Content */}
+            <div className="w-full lg:w-[80%]">
+              {/* Mobile Filters */}
+              <div className="lg:hidden mb-4">
+                <AstrologerFilters
+                  mobileFiltersOpen={mobileFiltersOpen}
+                  setMobileFiltersOpen={setMobileFiltersOpen}
+                />
+              </div>
+
+              {loading ? (
+                <Loader />
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {Array.isArray(astrologers) && astrologers.length > 0 ? (
+                      astrologers.map((astrologer) => (
+                        <AstrologerCard key={astrologer._id} astrologer={astrologer} />
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-center col-span-full">No astrologers found matching your criteria.</p>
+                    )}
+                  </div>
+
+                  <Pagination
+                    currentPage={currentPage}
+                    totalPages={totalPages}
+                    onPageChange={handlePageChange}
+                  />
+                </>
+              )}
+            </div>
+          </div>
+        </main>
+
+        <Footer />
+      </div>
+    </Suspense>
+  );
+}
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/chat-with-astrologer/chat/ChatUI.tsx ---
+
+"use client";
+
+import React, { useEffect, useState, useRef } from "react";
+import ChatMessage from "@/components/ui/ChatMessage";
+import { Socket } from "socket.io-client";
+import { useAppDispatch, useAppSelector } from "@/redux/hooks";
+import {
+  setTypingStatus,
+  setSummary,
+  selectTypingStatus,
+  setOnlineUser,
+  markChatAsRead
+} from "@/redux/chatSlice";
+import { groupMessagesByDate, isDivider } from "./utils";
+import { getCookie } from "@/lib/utils";
+
+interface ChatMessageType {
+  _id: string;
+  sender: {
+    _id: string;
+    name: string;
+    avatar?: string;
+  };
+  content: string;
+  createdAt: string;
+  type: string;
+  replyTo?: ChatMessageType | null;
+  reactions: { [userId: string]: string };
+}
+
+interface User {
+  _id: string;
+  userId: string;
+  status: "online" | "offline";
+  name: string;
+  email: string;
+  role: string;
+}
+
+interface ChatUIProps {
+  socket: Socket;
+  selectedChatId: string;
+  user: User;
+}
+
+interface SocketResponse {
+  success: boolean;
+  message?: string;
+}
+
+const TYPING_DEBOUNCE_DELAY = 3000;
+
+export default function ChatUI({ socket, selectedChatId, user }: ChatUIProps) {
+  const dispatch = useAppDispatch();
+  const [messages, setMessages] = useState<ChatMessageType[]>([]);
+  const [currentMessage, setCurrentMessage] = useState("");
+  const [replyTo, setReplyTo] = useState<ChatMessageType | null>(null);
+  const [summary, setSummaryState] = useState<string>("");
+  const endOfMessagesRef = useRef<HTMLDivElement>(null);
+
+  const isTyping = useAppSelector(state => selectTypingStatus(state, selectedChatId));
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Testing
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on('connect', () => {
+      console.log('Socket connected:', socket.id);
+    });
+
+    socket.on('disconnect', () => {
+      console.log('Socket disconnected');
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('Socket connection error:', error);
+    });
+
+    return () => {
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('connect_error');
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleUserStatusUpdate = ({ userId, status }: User) => {
+      dispatch(setOnlineUser({ userId, status }));
+    };
+
+    socket.on('userStatusUpdate', handleUserStatusUpdate);
+
+    return () => {
+      socket.off('userStatusUpdate', handleUserStatusUpdate);
+    };
+  }, [socket, dispatch]);
+
+  // Join the room + fetch existing messages
+  useEffect(() => {
+    if (!socket || !selectedChatId) return;
+
+    // 1) Join the room
+    socket.emit('joinRoom', { chatId: selectedChatId }, (response: SocketResponse) => {
+      if (response?.success) {
+        console.log('Successfully joined room:', selectedChatId);
+      } else {
+        console.error('Failed to join room:', selectedChatId);
+      }
+    });
+
+    // 2) Fetch chat messages
+    const loadMessages = async () => {
+      try {
+        const token = getCookie('token'); 
+        const response = await fetch(
+          `/api/v1/chat/${selectedChatId}`,
+          {
+            credentials: "include",
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/json'
+            }
+          }
+        );
+
+        if (!response.ok) {
+          // Handle HTTP errors
+          const errorData = await response.json();
+          throw new Error(errorData.message || "Failed to fetch messages");
+        }
+
+        const data = await response.json();
+
+        if (!data.success) {
+          throw new Error(data.message || "Failed to fetch messages");
+        }
+
+        setMessages(data.messages || []);
+      } catch (error) {
+        console.error("Error fetching chat messages:", error);
+        // toast notification system
+      }
+    };
+    loadMessages();
+
+    // Clean up: leave the room
+    return () => {
+      socket.emit("leaveRoom", { chatId: selectedChatId });
+    };
+  }, [socket, selectedChatId]);
+
+  // Socket listener for new messages
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleNewMessage = ({
+      chatId,
+      message,
+    }: {
+      chatId: string;
+      message: ChatMessageType;
+    }) => {
+      if (chatId === selectedChatId) {
+        setMessages((prev) => [...prev, message]);
+
+        // Show browser notification if not sent by current user
+        if (message.sender._id !== user._id) {
+          if (Notification.permission === "granted") {
+            new Notification(`New message from ${message.sender.name}`, {
+              body: message.content,
+              icon: message.sender.avatar || "/default-avatar.png",
+            });
+          }
+        }
+      }
+    };
+
+    socket.on("newMessage", handleNewMessage);
+
+    // Cleanup
+    return () => {
+      socket.off("newMessage", handleNewMessage);
+    };
+  }, [socket, selectedChatId, user]);
+
+
+  // Handle Edited Message
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleMessageEdited = ({ chatId, message }: { chatId: string; message: ChatMessageType }) => {
+      if (chatId === selectedChatId) {
+        setMessages(prev => prev.map(msg => msg._id === message._id ? message : msg));
+      }
+    };
+
+    socket.on('messageEdited', handleMessageEdited);
+
+    return () => {
+      socket.off('messageEdited', handleMessageEdited);
+    };
+  }, [socket, selectedChatId]);
+
+  // Handle Deleted Message
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleMessageDeleted = ({ chatId, messageId }: { chatId: string; messageId: string }) => {
+      if (chatId === selectedChatId) {
+        setMessages(prev => prev.filter(msg => msg._id !== messageId));
+      }
+    };
+
+    socket.on('messageDeleted', handleMessageDeleted);
+
+    return () => {
+      socket.off('messageDeleted', handleMessageDeleted);
+    };
+  }, [socket, selectedChatId]);
+
+  // Handle Typing Indicator
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleTyping = ({ isTyping }: { userId: string; isTyping: boolean }) => {
+      // Update typing status in Redux
+      dispatch(setTypingStatus({ chatId: selectedChatId, isTyping }));
+    };
+
+    socket.on('typing', handleTyping);
+
+    return () => {
+      socket.off('typing', handleTyping);
+    };
+  }, [socket, selectedChatId, dispatch]);
+
+  // Handle Reaction Updates from Server
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleMessageReactionUpdated = ({
+      chatId,
+      messageId,
+      reactions
+    }: {
+      chatId: string;
+      messageId: string;
+      reactions: { [key: string]: string };
+    }) => {
+      if (chatId === selectedChatId) {
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            msg._id === messageId
+              ? { ...msg, reactions: reactions || {} }
+              : msg
+          )
+        );
+      }
+    };
+
+    socket.on("messageReactionUpdated", handleMessageReactionUpdated);
+
+    return () => {
+      socket.off("messageReactionUpdated", handleMessageReactionUpdated);
+    };
+  }, [socket, selectedChatId]);
+
+  // Handle Summary
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleSummary = ({ summary }: { summary: string }) => {
+      setSummaryState(summary);
+      dispatch(setSummary({ chatId: selectedChatId, summary }));
+    };
+
+    socket.on('summary', handleSummary);
+
+    return () => {
+      socket.off('summary', handleSummary);
+    };
+  }, [socket, selectedChatId, dispatch]);
+
+  // Auto-scroll
+  useEffect(() => {
+    if (endOfMessagesRef.current) {
+      endOfMessagesRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, summary]);
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if (Notification.permission !== "granted") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedChatId) {
+      // Mark as read when component mounts
+      dispatch(markChatAsRead(selectedChatId));
+    }
+  }, [selectedChatId, dispatch]);
+
+  // Send message
+  const sendMessage = () => {
+    if (!currentMessage.trim()) return;
+    if (socket && selectedChatId) {
+      const messageData = {
+        chatId: selectedChatId,
+        message: currentMessage,
+        replyTo: replyTo?._id || null
+      };
+
+      socket.emit("sendMessage", messageData, (response: SocketResponse) => {
+        if (response?.success) {
+          console.log("Message sent successfully");
+        }
+      });
+
+      setCurrentMessage("");
+      setReplyTo(null);
+    }
+  };
+
+  // Handle Edit Message
+  const handleEditMessage = (messageId: string, newContent: string) => {
+    if (socket && selectedChatId) {
+      socket.emit('editMessage', { chatId: selectedChatId, messageId, newContent });
+    }
+  };
+
+  // Handle Delete Message
+  const handleDeleteMessage = (messageId: string) => {
+    if (socket && selectedChatId) {
+      socket.emit('deleteMessage', { chatId: selectedChatId, messageId });
+    }
+  };
+
+  // Handle Reply
+  const handleReply = (message: ChatMessageType) => {
+    setReplyTo(message);
+  };
+
+  // Handle Typing
+  const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setCurrentMessage(value);
+
+    if (socket && selectedChatId) {
+      // Clear existing timeout
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+
+      // Immediately send typing status if there's content
+      const isTyping = value.length > 0;
+      socket.emit('typing', { chatId: selectedChatId, isTyping });
+
+      // Set timeout to send false after delay if input is not empty
+      if (isTyping) {
+        typingTimeoutRef.current = setTimeout(() => {
+          socket.emit('typing', { chatId: selectedChatId, isTyping: false });
+        }, TYPING_DEBOUNCE_DELAY);
+      }
+    }
+  };
+
+  //cleanup for the timeout
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Request AI Summary
+  const requestSummary = () => {
+    if (socket && selectedChatId) {
+      socket.emit('generateSummary', { chatId: selectedChatId });
+    }
+  };
+
+
+  const reactToMessage = (messageId: string, emoji: string) => {
+    if (socket && selectedChatId) {
+      socket.emit("reactToMessage", {
+        chatId: selectedChatId,
+        messageId,
+        emoji,
+      });
+    }
+  };
+
+  const groupedMessages = groupMessagesByDate(messages);
+
+  return (
+    <>
+      {/* MESSAGES */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        {groupedMessages.map((item, index) => {
+          if (isDivider(item)) {
+            return (
+              <div key={`divider-${index}-${Date.now()}`} className="text-center text-gray-500 text-sm my-4">
+                {item.label}
+              </div>
+            );
+          }
+
+          return (
+            <ChatMessage
+              key={`${item._id}-${item.createdAt}`}
+              message={item}
+              currentUserId={user._id}
+              onReply={handleReply}
+              onEdit={handleEditMessage}
+              onDelete={handleDeleteMessage}
+              onReact={reactToMessage}
+            />
+          );
+        })}
+        {isTyping && <div className="text-sm text-gray-500 mx-14">Typing...</div>}
+        {summary && (
+          <div className="p-4 bg-yellow-100 rounded">
+            <h3 className="font-bold">Chat Summary:</h3>
+            <p>{summary}</p>
+          </div>
+        )}
+        <div ref={endOfMessagesRef} />
+      </div>
+
+      {/* INPUT */}
+      <div className="p-4 flex border-t flex-col">
+        {replyTo && (
+          <div className="p-2 bg-gray-100 rounded mb-2 flex justify-between items-center">
+            <span>
+              Replying to: <strong>{replyTo.content}</strong>
+            </span>
+            <button onClick={() => setReplyTo(null)} className="text-red-500">
+              Cancel
+            </button>
+          </div>
+        )}
+        <div className="flex">
+          <input
+            className="flex-1 border p-2 rounded-lg"
+            type="text"
+            placeholder="Type a message..."
+            value={currentMessage}
+            onChange={handleTyping}
+            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+          />
+          <button
+            onClick={sendMessage}
+            className="ml-2 bg-black px-4 rounded-lg text-white hover:bg-gray-900"
+          >
+            Send
+          </button>
+          <button
+            onClick={requestSummary}
+            className="ml-2 bg-black px-4 rounded-lg text-white hover:bg-gray-900"
+          >
+            Summary
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/chat-with-astrologer/chat/utils.ts ---
+
+interface ChatMessageType {
+  _id: string;
+  sender: {
+    _id: string;
+    name: string;
+    avatar?: string;
+  };
+  content: string;
+  createdAt: string;
+  type: string;
+  replyTo?: ChatMessageType | null;
+  reactions: { [userId: string]: string };
+}
+
+type DateDivider = {
+  type: 'divider';
+  label: string;
+};
+
+type GroupedMessage = ChatMessageType | DateDivider;
+
+export const isDivider = (item: GroupedMessage): item is DateDivider => {
+  return 'type' in item && item.type === 'divider';
+};
+
+export const groupMessagesByDate = (messages: ChatMessageType[]): GroupedMessage[] => {
+    const groups: GroupedMessage[] = [];
+    let currentDateGroup: string | null = null;
+  
+    messages.forEach((message) => {
+      const date = new Date(message.createdAt);
+      const today = new Date();
+      const diffDays = Math.floor(
+        (today.getTime() - date.getTime()) / (1000 * 60 * 60 * 24)
+      );
+  
+      let groupLabel = '';
+      if (diffDays === 0) {
+        groupLabel = 'Today';
+      } else if (diffDays === 1) {
+        groupLabel = 'Yesterday';
+      } else if (diffDays <= 7) {
+        groupLabel = 'This Week';
+      } else {
+        groupLabel = date.toLocaleDateString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric'
+        });
+      }
+  
+      if (groupLabel !== currentDateGroup) {
+        groups.push({ type: 'divider', label: groupLabel });
+        currentDateGroup = groupLabel;
+      }
+  
+      groups.push(message);
+    });
+  
+    return groups;
+  };
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/chat-with-astrologer/chat/CallUI.tsx ---
+
+"use client";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import Peer from "simple-peer";
+import { FiPhone, FiVideo, FiMic, FiMicOff, FiVideoOff, FiMonitor } from "react-icons/fi";
+import Image from "next/image";
+import { Socket } from "socket.io-client";
+
+interface IncomingCall {
+    callerId: string;
+    callerName: string;
+    callType: "audio" | "video";
+    signalData: Peer.SignalData;
+}
+
+interface OutgoingCall {
+    callType: "audio" | "video";
+    recipientId: string;
+}
+
+interface User {
+    _id: string;
+    name: string;
+}
+
+interface Participant {
+    _id: string;
+    name: string;
+    avatar: string;
+}
+
+interface CallUIProps {
+    socket: Socket;
+    user: User;
+    participant: Participant;
+    chatId: string;
+    astrologerId: string;
+}
+
+export default function CallUI({
+    socket,
+    user,
+    participant,
+
+}: CallUIProps) {
+    // State for call
+    const [isCallActive, setIsCallActive] = useState(false);
+    const [callType, setCallType] = useState<"audio" | "video" | null>(null);
+
+    // Outgoing call request
+    const [outgoingCall, setOutgoingCall] = useState<OutgoingCall | null>(null);
+
+    // Incoming call data
+    const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
+
+    // Peer refs
+    const myVideoRef = useRef<HTMLVideoElement>(null);
+    const remoteVideoRef = useRef<HTMLVideoElement>(null);
+    const peerRef = useRef<Peer.Instance | null>(null);
+
+    // Track the local media stream we’re using
+    const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+
+    // Toggles
+    const [isAudioMuted, setIsAudioMuted] = useState(false);
+    const [isVideoOff, setIsVideoOff] = useState(false);
+    const [isScreenSharing, setIsScreenSharing] = useState(false);
+
+    // ===========================
+    // 1) Socket: Listen for calls
+    // ===========================
+    const closePeer = useCallback(() => {
+        if (peerRef.current) {
+            peerRef.current.destroy();
+            peerRef.current = null;
+        }
+    
+        if (localStream) {
+            localStream.getTracks().forEach((track) => track.stop());
+        }
+        setLocalStream(null);
+    
+        if (myVideoRef.current?.srcObject) {
+            (myVideoRef.current.srcObject as MediaStream)
+                .getTracks()
+                .forEach((track) => track.stop());
+        }
+        if (remoteVideoRef.current?.srcObject) {
+            (remoteVideoRef.current.srcObject as MediaStream)
+                .getTracks()
+                .forEach((track) => track.stop());
+        }
+    
+        setIsAudioMuted(false);
+        setIsVideoOff(false);
+        setIsScreenSharing(false);
+    }, [localStream]);
+
+    const endCall = useCallback((emitToRemote: boolean = true) => {
+        setIsCallActive(false);
+        setCallType(null);
+        setIncomingCall(null);
+        setOutgoingCall(null);
+    
+        if (emitToRemote && socket) {
+            socket.emit("endCall", {});
+        }
+    
+        closePeer();
+    }, [socket, closePeer]); // Add closePeer to dependencies
+    
+    useEffect(() => {
+        if (!socket) return;
+    
+        const handleIncomingCall = (data: IncomingCall) => {
+            if (isCallActive) {
+                socket.emit("rejectCall", { callerId: data.callerId });
+            } else {
+                setIncomingCall(data);
+            }
+        };
+        socket.on("incomingCall", handleIncomingCall);
+    
+        const handleCallAccepted = (signalData: Peer.SignalData) => {
+            console.log("Caller received `callAccepted` =>", signalData);
+            if (peerRef.current) {
+                peerRef.current.signal(signalData);
+                setIsCallActive(true);
+            }
+        };
+        socket.on("callAccepted", handleCallAccepted);
+    
+        const handleCallRejected = () => {
+            endCall(false);
+            alert("Call was rejected.");
+        };
+        socket.on("callRejected", handleCallRejected);
+    
+        const handleCallEnded = () => {
+            console.log("Received 'callEnded' from remote side");
+            endCall(false);
+        };
+        socket.on("callEnded", handleCallEnded);
+    
+        return () => {
+            socket.off("incomingCall", handleIncomingCall);
+            socket.off("callAccepted", handleCallAccepted);
+            socket.off("callRejected", handleCallRejected);
+            socket.off("callEnded", handleCallEnded);
+        };
+    }, [socket, isCallActive, endCall]);
+    
+
+
+    // ===========================
+    // 2) Initiate Outgoing Call
+    // ===========================
+    const initiateCall = async (type: "audio" | "video") => {
+        if (!socket || !participant || !participant._id) return;
+
+        try {
+            setOutgoingCall({
+                callType: type,
+                recipientId: participant._id,
+            });
+
+            // Get local media
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: type === "video",
+                audio: true,
+            });
+            setLocalStream(stream);
+
+            if (myVideoRef.current) {
+                myVideoRef.current.srcObject = stream;
+                myVideoRef.current.play().catch(err => console.error(err));
+
+            }
+
+
+
+            // Create peer
+            const peer = new Peer({
+                initiator: true,
+                trickle: false,
+                stream,
+                config: {
+                    iceServers: [
+                        { urls: "stun:stun1.l.google.com:19302" },
+                        { urls: "stun:stun2.l.google.com:19302" },
+                        // Add TURN if needed
+                    ],
+                },
+            });
+
+            // Called when our local peer has signal data to send
+            peer.on("signal", (data) => {
+                socket.emit("callUser", {
+                    recipientId: participant._id,
+                    signalData: data,
+                    callType: type,
+                    callerName: user?.name || "Unknown",
+                });
+            });
+
+            // Called when remote peer’s stream arrives
+            peer.on("stream", (remoteStream) => {
+                if (remoteVideoRef.current) {
+                    remoteVideoRef.current.srcObject = remoteStream;
+                }
+            });
+
+            // Optional debug
+            peer.on("connect", () => {
+                console.log("Peer connected!");
+            });
+            peer.on("error", (err) => {
+                console.error("Peer error (caller):", err);
+            });
+
+            peerRef.current = peer;
+            setCallType(type);
+        } catch (err) {
+            console.error("Error initiating call:", err);
+            setOutgoingCall(null);
+        }
+    };
+
+    // ===========================
+    // 3) Accept Incoming Call
+    // ===========================
+    const acceptCall = async () => {
+        if (!incomingCall || !socket) return;
+        const { callerId, callType, signalData } = incomingCall;
+
+        try {
+            setIncomingCall(null);
+            setIsCallActive(true);
+            setCallType(callType);
+
+            // 1) Attempt full (video + audio) media if callType is "video"
+            let stream;
+            if (callType === "video") {
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: true,
+                        audio: true,
+                    });
+                } catch (error) {
+                    if (
+                        error instanceof Error &&
+                        (error.name === "NotReadableError" || error.name === "NotFoundError")
+                    ) {
+                        console.warn("Camera in use or not found. Falling back to audio only.");
+                        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        // Optionally set a local state like `cameraAvailable=false` to show camera is off in UI
+                    } else {
+                        console.error("Error in getUserMedia:", error);
+                        // Optionally reject or handle differently
+                        socket.emit("rejectCall", { callerId });
+                        return;
+                    }
+                }
+
+            } else {
+                // For audio‐only call, just get audio
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            }
+
+            setLocalStream(stream);
+
+            // Attach your local stream to a <video> if needed (for self preview)
+            if (myVideoRef.current) {
+                console.log(myVideoRef);
+                myVideoRef.current.srcObject = stream;
+                myVideoRef.current.play().catch(err => console.error(err));
+
+            }
+
+
+
+            // 3) Create the peer in “callee” mode
+            const peer = new Peer({
+                initiator: false,
+                trickle: false,
+                stream,
+                config: { /* your TURN/STUN config */ },
+            });
+
+            peer.on("signal", (data) => {
+                socket.emit("answerCall", {
+                    callerId,
+                    signalData: data,
+                });
+            });
+
+            peer.on("stream", (remoteStream) => {
+                if (remoteVideoRef.current) {
+                    remoteVideoRef.current.srcObject = remoteStream;
+                }
+            });
+
+            peer.on("error", (err) => {
+                console.error("Callee peer error:", err);
+            });
+
+            // 4) Use the caller’s signal to complete handshake
+            peer.signal(signalData);
+
+            peerRef.current = peer;
+        } catch (err) {
+            console.error("Error accepting call:", err);
+            socket.emit("rejectCall", { callerId });
+        }
+    };
+
+
+    // ===========================
+    // 4) Reject / Cancel Call
+    // ===========================
+    const rejectCall = () => {
+        if (!incomingCall || !socket) return;
+        socket.emit("rejectCall", { callerId: incomingCall.callerId });
+        setIncomingCall(null);
+    };
+
+    const cancelOutgoingCall = () => {
+        if (!outgoingCall || !socket) return;
+        socket.emit("rejectCall", { callerId: user?._id });
+        setOutgoingCall(null);
+        closePeer();
+    };
+
+    // ===========================
+    // 6) Toggle Audio
+    // ===========================
+    const toggleAudio = () => {
+        if (!localStream) return;
+
+        localStream.getAudioTracks().forEach((track) => {
+            track.enabled = !track.enabled;
+        });
+        setIsAudioMuted((prev) => !prev);
+    };
+
+    // ===========================
+    // 7) Toggle Video
+    // ===========================
+    const toggleVideo = () => {
+        if (!localStream) return;
+
+        localStream.getVideoTracks().forEach((track) => {
+            track.enabled = !track.enabled;
+        });
+        setIsVideoOff((prev) => !prev);
+    };
+
+    // ===========================
+    // 8) Screen Sharing (Desktop)
+    // ===========================
+    const startScreenShare = async () => {
+        if (!peerRef.current || !localStream) return;
+        try {
+            const screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: true,
+            });
+
+            // Replace the video track in Peer with screen track
+            const screenTrack = screenStream.getVideoTracks()[0];
+            const videoTrack = localStream.getVideoTracks()[0];
+            
+            if (videoTrack && screenTrack) {
+                peerRef.current.replaceTrack(
+                    videoTrack,
+                    screenTrack,
+                    localStream
+                );
+
+                setIsScreenSharing(true);
+
+                // Listen for user to stop share from browser UI
+                screenTrack.onended = () => {
+                    stopScreenShare();
+                };
+            }
+        } catch (err) {
+            console.error("Error starting screen share:", err);
+        }
+    };
+
+    const stopScreenShare = async () => {
+        if (!peerRef.current || !localStream) return;
+        try {
+            // Re-acquire camera
+            const newCameraStream = await navigator.mediaDevices.getUserMedia({
+                video: callType === "video",
+                audio: true,
+            });
+            const newCameraTrack = newCameraStream.getVideoTracks()[0];
+
+            // Replace the screen track with the camera track
+            peerRef.current.replaceTrack(
+                peerRef.current.streams[0].getVideoTracks()[0],
+                newCameraTrack,
+                peerRef.current.streams[0]
+            );
+
+            setIsScreenSharing(false);
+        } catch (err) {
+            console.error("Error stopping screen share:", err);
+        }
+    };
+
+    return (
+        <>
+            {/* ========== Header ========== */}
+            <div className="p-[14px] border-b flex items-center justify-between">
+                <div>
+                    {participant ? (
+                        <div className="flex items-center">
+                            <Image
+                                src={participant.avatar}
+                                alt="Avatar"
+                                width={100}
+                                height={100}
+                                className="w-8 h-8 rounded-full object-cover mx-2"
+                            />
+                            <div>{participant.name}</div>
+                        </div>
+                    ) : (
+                        <div>Unknown participant</div>
+                    )}
+                </div>
+                <div className="flex space-x-4 justify-end">
+                    <button
+                        onClick={() => initiateCall("audio")}
+                        className="p-2 rounded bg-gray-200 hover:bg-gray-300"
+                    >
+                        <FiPhone />
+                    </button>
+                    <button
+                        onClick={() => initiateCall("video")}
+                        className="p-2 rounded bg-gray-200 hover:bg-gray-300"
+                    >
+                        <FiVideo />
+                    </button>
+                </div>
+            </div>
+
+            {/* ========== Outgoing Call Overlay ========== */}
+            {outgoingCall && !isCallActive && (
+                <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+                    <div className="bg-white p-6 w-72 rounded shadow-md text-center">
+                        <p className="text-xl font-semibold">Calling...</p>
+                        <p className="text-sm mt-2">{participant?.name}</p>
+                        <button
+                            onClick={cancelOutgoingCall}
+                            className="mt-4 bg-red-500 text-white px-4 py-2 rounded"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ========== Incoming Call Overlay ========== */}
+            {incomingCall && !isCallActive && (
+                <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+                    <div className="bg-white p-6 w-72 rounded shadow-md text-center">
+                        <p className="text-xl font-semibold">Incoming Call</p>
+                        <p className="text-sm mt-2">
+                            {incomingCall.callType === "video" ? "Video" : "Audio"} Call from{" "}
+                            {incomingCall.callerName}
+                        </p>
+                        <div className="flex space-x-4 mt-4 justify-center">
+                            <button
+                                onClick={acceptCall}
+                                className="bg-green-500 text-white px-4 py-2 rounded"
+                            >
+                                Accept
+                            </button>
+                            <button
+                                onClick={rejectCall}
+                                className="bg-red-500 text-white px-4 py-2 rounded"
+                            >
+                                Reject
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ========== Active Call UI ========== */}
+            {isCallActive && (
+                <div className="fixed bottom-4 right-4 bg-white p-3 shadow-lg border flex flex-col items-center z-50 rounded w-72">
+                    <div className="flex w-full justify-center space-x-2 mb-2">
+                        {/* Local video */}
+                        {callType === "video" && (
+                            <video
+                                ref={myVideoRef}
+                                autoPlay
+                                muted
+                                playsInline
+                                className="w-32 h-24 bg-black"
+                            />
+
+
+                        )}
+
+                        {/* Remote video */}
+                        {callType === "video" && (
+                            <video
+                                ref={remoteVideoRef}
+                                autoPlay
+                                className="w-32 h-24 bg-black"
+                            />
+                        )}
+                    </div>
+
+                    {/* Audio-call placeholders if video is off */}
+                    {callType === "audio" && (
+                        <p className="text-sm text-gray-700 mb-2">Audio Call in progress...</p>
+                    )}
+
+                    <div className="flex space-x-2">
+                        {/* Toggle Audio */}
+                        <button
+                            onClick={toggleAudio}
+                            className="p-2 bg-gray-200 rounded hover:bg-gray-300"
+                        >
+                            {isAudioMuted ? <FiMicOff /> : <FiMic />}
+                        </button>
+
+                        {/* Toggle Video (only if callType === "video") */}
+                        {callType === "video" && (
+                            <button
+                                onClick={toggleVideo}
+                                className="p-2 bg-gray-200 rounded hover:bg-gray-300"
+                            >
+                                {isVideoOff ? <FiVideoOff /> : <FiVideo />}
+                            </button>
+                        )}
+
+                        {/* Screen Share (only if callType === "video") */}
+                        {callType === "video" && (
+                            <>
+                                {!isScreenSharing ? (
+                                    <button
+                                        onClick={startScreenShare}
+                                        className="p-2 bg-gray-200 rounded hover:bg-gray-300"
+                                        title="Share Screen"
+                                    >
+                                        <FiMonitor />
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={stopScreenShare}
+                                        className="p-2 bg-gray-200 rounded hover:bg-gray-300"
+                                        title="Stop Sharing"
+                                    >
+                                        <FiMonitor className="text-red-600" />
+                                    </button>
+                                )}
+                            </>
+                        )}
+
+                        {/* End Call */}
+                        <button
+                            onClick={() => endCall(true)}
+                            className="p-2 bg-red-500 text-white rounded hover:bg-red-600"
+                        >
+                            End
+                        </button>
+                    </div>
+                </div>
+            )}
+        </>
+    );
+}
+
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/chat-with-astrologer/chat/page.tsx ---
+
+"use client";
+
+import React, { useState, useEffect, Suspense } from "react";
+import { useSearchParams, useParams } from "next/navigation";
+import { useAppSelector, useAppDispatch } from "@/redux/hooks";
+import { RootState, store } from "@/redux/store";
+import { io, Socket } from "socket.io-client";
+import ChatUI from "./ChatUI";
+import CallUI from "./CallUI";
+import Image from "next/image";
+import {
+  setOnlineUser,
+  selectOnlineUsers,
+  deleteConversation,
+  incrementUnreadCount,
+  markChatAsRead,
+  selectUnreadCounts
+} from "@/redux/chatSlice";
+import { getCookie } from "@/lib/utils";
+
+interface Participant {
+  _id: string;
+  name: string;
+  avatar: string;
+}
+
+interface ChatItem {
+  _id: string;
+  userId: Participant;
+  astrologerId: Participant;
+  unreadCount: number;
+}
+
+interface OnlineUser {
+  userId: string;
+  status: "online" | "offline";
+}
+
+const ChatContent = () => {
+  const searchParams = useSearchParams();
+  const chatId = searchParams.get("chatId");
+  const params = useParams();
+  const astrologerId = params.id as string;
+
+  const user = useAppSelector((state: RootState) => state.user.user);
+  const onlineUsers = useAppSelector(selectOnlineUsers);
+  const unreadCounts = useAppSelector(selectUnreadCounts);
+  const dispatch = useAppDispatch();
+
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [chatList, setChatList] = useState<ChatItem[]>([]);
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(chatId || null);
+  const [contextMenu, setContextMenu] = useState<{ chatId: string | null; position: { x: number; y: number } }>({ chatId: null, position: { x: 0, y: 0 } });
+
+  useEffect(() => {
+    // const token = getCookie('token'); 
+    const newSocket = io('https://jyotishconnect.onrender.com', {
+      auth: { token: store.getState().user.token },
+      transports: ['websocket']
+    });
+    newSocket.on("connect", () => console.log("Connected to socket.io server"));
+    newSocket.on("connect_error", (err) => console.error("Connection error:", err.message));
+    newSocket.on("userStatusUpdate", ({ userId, status }: OnlineUser) =>
+      dispatch(setOnlineUser({ userId, status }))
+    );
+    newSocket.on("onlineUsers", (users: OnlineUser[]) =>
+      users.forEach(user => dispatch(setOnlineUser({ userId: user.userId, status: "online" })))
+    );
+
+    setSocket(newSocket);
+
+    return () => {
+      if (newSocket.connected) {
+        newSocket.disconnect();
+      }
+    };
+  }, [dispatch]);
+
+  useEffect(() => {
+    const loadChatList = async () => {
+      try {
+        const token = getCookie('token'); 
+
+        const response = await fetch(`/api/v1/chat/list`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+        });
+        if (!response.ok) throw new Error("Failed to fetch chat list");
+        const data = await response.json();
+        setChatList(data);
+
+        // Initialize Redux unread counts from server data
+        const initialCounts = data.reduce((acc: Record<string, number>, chat: ChatItem) => ({
+          ...acc,
+          [chat._id]: chat.unreadCount
+        }), {});
+        dispatch(markChatAsRead(initialCounts));
+      } catch (error) {
+        console.error("Error fetching chat list:", error);
+      }
+    };
+    loadChatList();
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (!socket) return undefined;
+
+    const handleNewMessage = ({ chatId }: { chatId: string }) => {
+      if (chatId !== selectedChatId) {
+        dispatch(incrementUnreadCount(chatId));
+      }
+    };
+
+    socket.on("newMessage", handleNewMessage);
+
+    // Return cleanup function
+    return () => {
+      socket.off("newMessage", handleNewMessage);
+    };
+  }, [socket, selectedChatId, dispatch]);
+
+  const selectedChatData = chatList.find(chat => chat._id === selectedChatId);
+  const participant = selectedChatData ? (selectedChatData.userId._id === user?._id ? selectedChatData.astrologerId : selectedChatData.userId) : null;
+
+  const handleContextMenu = (e: React.MouseEvent, chatId: string) => {
+    e.preventDefault();
+    setContextMenu({ chatId, position: { x: e.clientX, y: e.clientY } });
+  };
+
+  const closeContextMenu = () => setContextMenu({ chatId: null, position: { x: 0, y: 0 } });
+
+  const handleDeleteConversation = () => {
+    if (contextMenu.chatId) {
+      dispatch(deleteConversation(contextMenu.chatId));
+      if (selectedChatId === contextMenu.chatId) setSelectedChatId(null);
+      closeContextMenu();
+    }
+  };
+
+  const handleMarkAsRead = async (chatId: string) => {
+    try {
+      const token = getCookie('token'); 
+
+      await fetch(`/api/v1/chat/${chatId}/read`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+      });
+      dispatch(markChatAsRead(chatId));
+    } catch (error) {
+      console.error('Error marking chat as read:', error);
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = () => closeContextMenu();
+    window.addEventListener("click", handleClickOutside);
+    return () => window.removeEventListener("click", handleClickOutside);
+  }, []);
+
+  return (
+    <div className="flex h-screen">
+      {/* Context Menu */}
+      {contextMenu.chatId && (
+        <div
+          className="absolute bg-white shadow-lg rounded-md p-2 z-50"
+          style={{ left: contextMenu.position.x, top: contextMenu.position.y }}
+        >
+          <button
+            onClick={handleDeleteConversation}
+            className="w-full px-4 py-2 text-left text-red-500 hover:bg-gray-100 rounded-md"
+          >
+            Delete Conversation
+          </button>
+        </div>
+      )}
+
+      {/* Chat List */}
+      <div className="w-1/4 border-r border-gray-300 flex flex-col">
+        <h2 className="p-4 font-bold text-lg">Chat History</h2>
+        <div className="flex-1 overflow-y-auto">
+          {chatList.map(chat => {
+            const chatParticipant = chat.userId._id === user?._id ? chat.astrologerId : chat.userId;
+            const isOnline = onlineUsers.find(u => u.userId === chatParticipant._id)?.status === "online";
+            const unread = unreadCounts[chat._id] || 0;
+
+            return (
+              <div
+                key={chat._id}
+                onContextMenu={(e) => handleContextMenu(e, chat._id)}
+                onClick={async () => {
+                  setSelectedChatId(chat._id);
+                  closeContextMenu();
+                  await handleMarkAsRead(chat._id);
+                }}
+                className={`p-3 border-b cursor-pointer flex items-center justify-between ${selectedChatId === chat._id ? "bg-gray-200" : "hover:bg-gray-100"
+                  }`}
+              >
+                <div className="flex items-center">
+                  <div className="relative">
+                    <Image
+                      src={chatParticipant.avatar || "/default-avatar.png"}
+                      alt="Avatar"
+                      width={32}
+                      height={32}
+                      className="w-8 h-8 rounded-full object-cover mx-2"
+                    />
+                    <div className={`absolute top-0 right-2 w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-gray-500"
+                      }`}
+                      title={isOnline ? "Online" : "Offline"} />
+                  </div>
+                  <div className="font-semibold">{chatParticipant.name}</div>
+                </div>
+                {unread > 0 && (
+                  <span className="bg-green-500 text-white rounded-full px-2 py-1 text-xs">
+                    {unread}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Chat + Call UI */}
+      <div className="flex-1 flex flex-col relative">
+        {selectedChatId && socket ? (
+          participant && user ? (
+            <>
+              <CallUI
+                socket={socket}
+                user={user}
+                participant={participant}
+                chatId={selectedChatId}
+                astrologerId={astrologerId}
+              />
+              <ChatUI
+                socket={socket}
+                selectedChatId={selectedChatId}
+                user={{ ...user, userId: user._id, status: "online" }}
+              />
+
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-gray-400">
+              Loading participant details...
+            </div>
+          )
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-gray-400">
+            {selectedChatId ? "Connecting..." : "Select a chat to start messaging"}
+          </div>
+        )}
+      </div>
+
+    </div>
+  );
+};
+
+export default function ChatPage() {
+  return <Suspense fallback={<div>Loading...</div>}><ChatContent /></Suspense>;
+}
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/chat-with-astrologer/[id]/page.tsx ---
+
+"use client";
+
+import { useEffect, useState } from 'react';
+import { useParams } from 'next/navigation';
+import { Header } from '@/components/header';
+import { Footer } from '@/components/footer';
+import { Loader } from '@/components/loader';
+import { Star } from 'lucide-react';
+import Image from 'next/image';
+import { motion } from 'framer-motion';
+import ReviewsContent from './ReviewsContent';
+import { useAppSelector } from '@/redux/hooks';
+import { selectUser } from '@/redux/userSlice';
+
+interface RatingStats {
+  average: number;
+  total: number;
+  distribution: {
+    [key: string]: number;
+  };
+}
+
+interface Specialization {
+  _id: string;
+  name: string;
+}
+
+interface Review {
+  _id: string;
+  rating: number;
+  comment: string;
+  userId: {
+    _id: string;
+    name: string;
+  };
+  createdAt: string;
+}
+
+interface AstrologerResponse {
+  astrologer: {
+    _id: string;
+    userId: {
+      _id: string;
+      name: string;
+      avatar: string;
+    };
+    languages: string[];
+    experience: number;
+    costPerMinute: number;
+    chatStatus: string;
+    callStatus: string;
+    about: string;
+    totalConsultations: number;
+    specializations: Specialization[];
+  };
+  reviews: Review[];
+  ratingStats: RatingStats;
+}
+
+const renderStars = (rating: number) => {
+  return Array(5).fill(0).map((_, i) => (
+    <Star
+      key={i}
+      className={`w-5 h-5 ${i < rating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}`}
+    />
+  ));
+};
+
+const formatLanguages = (languages: string[]) => languages.join(', ');
+
+export default function AstrologerDetailPage() {
+  const params = useParams();
+  const [data, setData] = useState<AstrologerResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const user = useAppSelector(selectUser);
+
+
+  useEffect(() => {
+    const fetchAstrologer = async () => {
+      try {
+        const response = await fetch(`/api/v1/astrologers/${params.id}`);
+        if (!response.ok) throw new Error('Failed to fetch astrologer data');
+        const data = await response.json();
+        setData(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An error occurred');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (params.id) {
+      fetchAstrologer();
+    }
+  }, [params.id]);
+
+  if (loading) return <Loader />;
+  if (error) return <div className="text-center text-red-500">{error}</div>;
+  if (!data) return <div className="text-center">No data found</div>;
+
+  const { astrologer, ratingStats } = data;
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Header />
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <motion.div
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: -20, opacity: 0 }}
+          transition={{ duration: 0.2, ease: "easeInOut" }}
+          className="flex flex-col bg-white rounded-2xl shadow-xl backdrop-blur-sm hover:shadow-2xl transition-all duration-300"
+        >
+          <div className="grid grid-cols-1 md:grid-cols-[300px_1fr] gap-8 p-6">
+            {/* Image Section */}
+            <div className="flex flex-col items-center space-y-4">
+              <div className="relative h-72 w-72 rounded-2xl overflow-hidden border-4 border-white shadow-lg">
+                <Image
+                  src={astrologer.userId.avatar}
+                  alt={astrologer.userId.name}
+                  fill
+                  className="object-cover"
+                />
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 p-4">
+                  <h3 className="text-2xl font-bold text-white">
+                    {astrologer.userId.name}
+                  </h3>
+                  <p className="text-gray-200 text-sm">
+                    {formatLanguages(astrologer.languages)}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-col items-center space-y-2">
+                <div className="flex items-center space-x-1">
+                  {renderStars(ratingStats.average)}
+                  <span className="text-sm text-gray-500 ml-2">
+                    ({astrologer.totalConsultations} consultations)
+                  </span>
+                </div>
+                <div className="text-3xl font-bold text-black">
+                  ₹{astrologer.costPerMinute}/min
+                </div>
+                {/* Action Button */}
+              <button className="w-full bg-black text-white py-4 rounded-xl font-medium transition-colors duration-300 shadow-lg hover:shadow-xl">
+                <div className="flex items-center justify-center gap-2">
+                  <span>Book Consultation Now</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </button>
+              </div>
+            </div>
+
+            {/* Details Section */}
+            <div className="space-y-6">
+              {/* Status Badges */}
+              <div className="flex gap-4">
+                <div className={`flex items-center px-4 py-2 rounded-xl ${astrologer.chatStatus === 'online' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'}`}>
+                  <div className="w-3 h-3 rounded-full bg-green-400 mr-2 animate-pulse"></div>
+                  Chat {astrologer.chatStatus}
+                </div>
+                <div className={`flex items-center px-4 py-2 rounded-xl ${astrologer.callStatus === 'online' ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-500'}`}>
+                  <div className="w-3 h-3 rounded-full bg-blue-400 mr-2 animate-pulse"></div>
+                  Call {astrologer.callStatus}
+                </div>
+              </div>
+
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:border-blue-200 transition-all duration-300">
+                  <div className="flex items-center space-x-2">
+                    <div className="text-2xl font-bold text-gray-800">
+                      🌟 {ratingStats.average.toFixed(1)}
+                    </div>
+                  </div>
+                  <p className="text-sm text-gray-500">Rating</p>
+                </div>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:border-blue-200 transition-all duration-300">
+                  <div className="text-2xl font-bold text-gray-800">
+                    {astrologer.experience}
+                  </div>
+                  <p className="text-sm text-gray-500">Years Experience</p>
+                </div>
+              </div>
+
+              {/* Specialization */}
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <div className="flex items-center space-x-2">
+                  <span className="text-gray-500 text-sm">Specialization:</span>
+                  <div className="flex flex-wrap gap-2">
+                    {astrologer.specializations.map((spec) => (
+                      <span key={spec._id} className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-sm">
+                        {spec.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* About Section */}
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">About Me</h3>
+                <p className="text-gray-600 leading-relaxed">
+                  {astrologer.about}
+                </p>
+              </div>
+
+
+            </div>
+          </div>
+        </motion.div>
+      </main>
+      <div className="py-8">
+        {user && params.id && (
+          <ReviewsContent
+            astrologerId={Array.isArray(params.id) ? params.id[0] : params.id}
+            currentUserId={user._id}
+          />
+        )}
+      </div>
+
+      <Footer />
+    </div>
+  );
+}
+
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/chat-with-astrologer/[id]/ReviewsContent.tsx ---
+
+"use client";
+
+import { Button } from "@/components/ui/button";
+import React, { useEffect, useState, useCallback } from "react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import ReviewCard from "@/components/ReviewComponent/ReviewCard";
+import axios from "axios";
+import { Review } from "@/lib/reviewService";
+
+interface ReviewsResponse {
+  reviews: Review[];
+  pagination: {
+    total: number;
+    pages: number;
+    current: number;
+    perPage: number;
+  };
+}
+
+interface ReviewsContentProps {
+  astrologerId: string;
+  currentUserId: string;
+}
+
+const ReviewsContent = ({ astrologerId }: ReviewsContentProps) => {
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [totalReviews, setTotalReviews] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState("latest");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [newReviewRating, setNewReviewRating] = useState(5);
+  const [newReviewComment, setNewReviewComment] = useState('');
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const fetchReviews = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await axios.get<ReviewsResponse>(
+        `http://localhost:7000/api/v1/reviews/astrologer/${astrologerId}`,
+        { params: { page: currentPage, sort: sortBy } }
+      );
+      if (currentPage === 1) {
+        setReviews(response.data.reviews);
+      } else {
+        setReviews(prev => [...prev, ...response.data.reviews]);
+      }
+      setTotalReviews(response.data.pagination.total);
+      setError(null);
+    } catch {
+      setError("Failed to fetch reviews");
+      console.error("Error fetching reviews");
+    } finally {
+      setLoading(false);
+    }
+  }, [astrologerId, sortBy, currentPage]);
+
+  useEffect(() => {
+    fetchReviews();
+  }, [fetchReviews]);
+
+  const handleSortChange = (value: string) => {
+    setSortBy(value);
+    setCurrentPage(1); 
+  };
+
+  const handleLoadMore = () => {
+    setCurrentPage(prev => prev + 1);
+  };
+
+  const handleWriteReview = () => {
+    setShowReviewForm(true);
+  };
+
+  const handleReviewSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setSubmittingReview(true);
+    try {
+      const response = await axios.post("http://localhost:7000/api/v1/reviews/create", {
+        astrologerId,
+        rating: newReviewRating,
+        comment: newReviewComment,
+      });
+      setReviews(prev => [response.data, ...prev]);
+      setTotalReviews(prev => prev + 1);
+      setNewReviewRating(5);
+      setNewReviewComment('');
+      setShowReviewForm(false);
+      setReviewError(null);
+    } catch (err) {
+      console.error("Error submitting review:", err);
+      setReviewError("Failed to submit review");
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  if (error) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-red-500">{error}</p>
+        <Button
+          onClick={() => fetchReviews()}
+          className="mt-4"
+          variant="outline"
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <section className="w-[70%]  mx-auto">
+      <div className=" flex items-center justify-between flex-col sm:flex-row mb-5 sm:mb-6">
+        <div className="flex items-center mb-4 sm:mb-0">
+          <h3 className="text-xl sm:text-2xl font-bold text-black mr-2">
+            All Reviews
+          </h3>
+          <span className="text-sm sm:text-base text-black/60">
+            ({totalReviews})
+          </span>
+        </div>
+        <div className="flex items-center space-x-2.5">
+          <Select value={sortBy} onValueChange={handleSortChange}>
+            <SelectTrigger className="min-w-[120px] font-medium text-xs sm:text-base px-4 py-3 sm:px-5 sm:py-4 text-black bg-[#F0F0F0] border-none rounded-full h-12">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="latest">Latest</SelectItem>
+              <SelectItem value="most-relevant">Most Relevant</SelectItem>
+              <SelectItem value="oldest">Oldest</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Button
+            type="button"
+            className="sm:min-w-[166px] px-4 py-3 sm:px-5 sm:py-4 rounded-full bg-black font-medium text-xs sm:text-base h-12"
+            onClick={handleWriteReview}
+          >
+            Write a Review
+          </Button>
+        </div>
+      </div>
+
+      {showReviewForm && (
+        <form onSubmit={handleReviewSubmit} className="mb-6">
+          <div className="mb-4">
+            <label className="block text-sm font-semibold text-gray-700">Rating</label>
+            <select
+              value={newReviewRating}
+              onChange={(e) => setNewReviewRating(Number(e.target.value))}
+              className="mt-1 block w-full border-gray-300 rounded-md"
+            >
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+              <option value={4}>4</option>
+              <option value={5}>5</option>
+            </select>
+          </div>
+          <div className="mb-4">
+            <label className="block text-sm font-semibold text-gray-700">Comment</label>
+            <textarea
+              value={newReviewComment}
+              onChange={(e) => setNewReviewComment(e.target.value)}
+              className="mt-1 block w-full border-gray-300 rounded-md"
+              rows={3}
+              placeholder="Write your review here..."
+            ></textarea>
+          </div>
+          {reviewError && <p className="text-red-500 text-sm mb-2">{reviewError}</p>}
+          <div className="flex space-x-3">
+            <Button type="submit" disabled={submittingReview} className="bg-black text-white">
+              {submittingReview ? "Submitting..." : "Submit Review"}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setShowReviewForm(false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {loading && currentPage === 1 ? (
+        <div className="flex justify-center items-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-5 sm:mb-9">
+            {reviews.map((review) => (
+              <ReviewCard
+                key={review._id}
+                data={review}
+                isAction={true}
+                isDate={true}
+              />
+            ))}
+          </div>
+
+          {reviews.length < totalReviews && (
+            <div className="w-full px-4 sm:px-0 text-center">
+              <Button
+                variant="outline"
+                className="inline-block w-[230px] px-11 py-4 border rounded-full hover:bg-black hover:text-white text-black transition-all font-medium text-sm sm:text-base border-black/10"
+                onClick={handleLoadMore}
+                disabled={loading}
+              >
+                {loading ? (
+                  <span className="flex items-center">
+                    <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-current mr-2"></span>
+                    Loading...
+                  </span>
+                ) : (
+                  "Load More Reviews"
+                )}
+              </Button>
+            </div>
+          )}
+
+          {reviews.length === 0 && (
+            <div className="text-center py-8">
+              <p className="text-black/60">No reviews yet</p>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+};
+
+export default ReviewsContent;
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/horoscopes/page.tsx ---
+
+"use client";
+import React, { useEffect, useState } from "react";
+import Script from "next/script";
+
+/* Added global type declarations for AstroTable */
+declare global {
+  interface AstroTableSettings {
+    ElementID: string;
+    KeyColumn: string;
+    ShowHeader: boolean;
+    HeaderIcon: string;
+    ColumnData: { Api: string; Enabled: boolean; Name: string }[];
+    EnableSorting: boolean;
+    SaveSettings: boolean;
+  }
+  interface AstroTableConstructor {
+    new (settings: AstroTableSettings): void;
+  }
+  interface Window {
+    AstroTable?: AstroTableConstructor;
+  }
+}
+
+export default function HoroscopePage() {
+  // State for user input details
+  const [userDetails, setUserDetails] = useState({
+    name: "",
+    dob: "",
+    time: "",
+    place: "",
+  });
+
+  // Flag to track form submission.
+  const [isSubmitted, setIsSubmitted] = useState(false);
+
+  // Handle input changes
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setUserDetails(prev => ({ ...prev, [name]: value }));
+  };
+
+  // Form submission handler
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    console.log("Form submitted with:", userDetails);
+
+    try {
+      // Calling our Node backend route that will proxy to the Dockerized API endpoint:
+      const response = await fetch("/api/v1/horoscope", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(userDetails),
+      });
+      const data = await response.json();
+      console.log("Horoscope data from backend:", data);
+      // Optionally update your state with this data to use it in AstroTable or for rendering.
+    } catch (error) {
+      console.error("Error fetching horoscope data:", error);
+    }
+
+    setIsSubmitted(true);
+  };
+
+  // Initialize the AstroTable after the form is submitted
+  useEffect(() => {
+    if (isSubmitted) {
+      console.log("Attempting to generate horoscope...");
+      if (typeof window !== "undefined" && window.AstroTable) {
+        console.log("AstroTable is available, initializing the horoscope table.");
+
+        // Define the columns for the planetary data table.
+        const planetColumns = [
+          { Api: "PlanetZodiacSign", Enabled: true, Name: "Sign" },
+          { Api: "PlanetConstellation", Enabled: true, Name: "Star" },
+          { Api: "PlanetLordOfZodiacSign", Enabled: true, Name: "Sign Lord" },
+          { Api: "PlanetLordOfConstellation", Enabled: true, Name: "Star Lord" },
+          { Api: "PlanetSubLordKP", Enabled: true, Name: "Sub Lord" },
+          { Api: "Empty", Enabled: false, Name: "Empty" },
+        ];
+
+        // Configure the settings for the AstroTable.
+        const settings = {
+          ElementID: "PlanetDataTable",
+          KeyColumn: "Planet",
+          ShowHeader: true,
+          HeaderIcon: "twemoji:ringed-planet",
+          ColumnData: planetColumns,
+          EnableSorting: false,
+          SaveSettings: false,
+        };
+
+        // Clear any existing content in the container before re-rendering the table.
+        const container = document.getElementById("PlanetDataTable");
+        if (container) {
+          container.innerHTML = "";
+        }
+
+        // Create a new AstroTable instance using the declared type.
+        new window.AstroTable(settings);
+      } else {
+        console.error("AstroTable is not available yet. Ensure the VedAstro script is loaded.");
+      }
+    }
+  }, [isSubmitted, userDetails]);
+
+  return (
+    <>
+      {/* Load jQuery and VedAstro from CDN before the page renders */}
+      <Script
+        src="https://cdn.jsdelivr.net/npm/jquery/dist/jquery.min.js"
+        strategy="beforeInteractive"
+      />
+      <Script
+        src="https://vedastro.org/js/VedAstro.js"
+        strategy="beforeInteractive"
+      />
+
+      <div className="container mx-auto p-4">
+        <h1 className="text-2xl font-bold mb-4">Horoscope Chart</h1>
+
+        {/* User Input Form */}
+        <form onSubmit={handleSubmit} className="mb-6">
+          <div className="mb-4">
+            <label className="block font-medium" htmlFor="name">
+              Name
+            </label>
+            <input
+              type="text"
+              id="name"
+              name="name"
+              value={userDetails.name}
+              onChange={handleInputChange}
+              className="mt-1 p-2 border rounded w-full"
+              required
+            />
+          </div>
+
+          <div className="mb-4">
+            <label className="block font-medium" htmlFor="dob">
+              Date of Birth
+            </label>
+            <input
+              type="date"
+              id="dob"
+              name="dob"
+              value={userDetails.dob}
+              onChange={handleInputChange}
+              className="mt-1 p-2 border rounded w-full"
+              required
+            />
+          </div>
+
+          <div className="mb-4">
+            <label className="block font-medium" htmlFor="time">
+              Time of Birth
+            </label>
+            <input
+              type="time"
+              id="time"
+              name="time"
+              value={userDetails.time}
+              onChange={handleInputChange}
+              className="mt-1 p-2 border rounded w-full"
+              required
+            />
+          </div>
+
+          <div className="mb-4">
+            <label className="block font-medium" htmlFor="place">
+              Place of Birth
+            </label>
+            <input
+              type="text"
+              id="place"
+              name="place"
+              value={userDetails.place}
+              onChange={handleInputChange}
+              className="mt-1 p-2 border rounded w-full"
+              required
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="bg-blue-500 hover:bg-blue-600 text-white font-bold p-2 rounded"
+          >
+            Generate Horoscope
+          </button>
+        </form>
+
+        {/* This div will be populated by VedAstro's AstroTable */}
+        <div id="PlanetDataTable" className="border p-4"></div>
+      </div>
+    </>
+  );
+}
+
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/auth/login/page.tsx ---
+
+"use client";
+import React, { useState, Suspense } from "react";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { cn, getCookie } from "@/lib/utils";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useAppDispatch, useAuth } from "@/redux/hooks";
+import { loginUser } from "@/redux/userSlice";
+
+// Reusable container
+const LabelInputContainer = ({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) => {
+  return (
+    <div className={cn("flex flex-col space-y-2 w-full", className)}>
+      {children}
+    </div>
+  );
+};
+
+const LoginForm = () => {
+  const dispatch = useAppDispatch();
+  const { loading, error } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectUrl = searchParams.get("redirectUrl") || "/";
+
+
+  const [formData, setFormData] = useState({
+    email: "",
+    password: "",
+  });
+
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormData((prev) => ({
+      ...prev,
+      [e.target.id]: e.target.value,
+    }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    try {
+      await dispatch(loginUser(formData)).unwrap();
+
+      
+      const token = getCookie('token'); 
+
+      console.log("Token from cookie:", token);
+      alert(token);
+
+      router.push(redirectUrl);
+    } catch (error) {
+      console.error("Login failed:", error);
+    }
+  };
+
+  return (
+    <form className="my-8" onSubmit={handleSubmit}>
+      <LabelInputContainer className="mb-4">
+        <Label htmlFor="email">Email Address</Label>
+        <Input
+          id="email"
+          placeholder="projectmayhem@fc.com"
+          type="email"
+          value={formData.email}
+          onChange={handleChange}
+          disabled={loading}
+          defaultValue="test2@example.com"
+        />
+      </LabelInputContainer>
+
+      <LabelInputContainer className="mb-4">
+        <Label htmlFor="password">Password</Label>
+        <Input
+          id="password"
+          placeholder="••••••••"
+          type="password"
+          value={formData.password}
+          onChange={handleChange}
+          disabled={loading}
+          defaultValue="test123"
+        />
+      </LabelInputContainer>
+
+      {error && <p className="text-red-500 mb-4 text-sm">{error}</p>}
+
+      <button
+        className={cn(
+          "relative w-full h-10 text-white rounded-md font-medium",
+          loading
+            ? "bg-gray-400 cursor-not-allowed"
+            : "bg-black bg-opacity-85 hover:bg-opacity-95"
+        )}
+        type="submit"
+        disabled={loading}
+      >
+        {loading ? "Logging in..." : "Login →"}
+      </button>
+
+      <div className="text-center p-2 text-blue-500">
+        <Link href="/auth/signup">Sign Up Instead</Link>
+      </div>
+    </form>
+  );
+};
+
+const LoginFormFallback = () => {
+  return (
+    <div className="my-8 animate-pulse">
+      <div className="mb-4 h-20 bg-gray-200 rounded"></div>
+      <div className="mb-4 h-20 bg-gray-200 rounded"></div>
+      <div className="h-10 bg-gray-200 rounded"></div>
+    </div>
+  );
+};
+
+export default function LoginPage() {
+  return (
+    <div className="h-[100vh] flex items-center">
+      <div className="max-w-md w-full mx-auto rounded-none md:rounded-2xl p-4 md:p-8 shadow-input bg-white dark:bg-black">
+        <h2 className="font-bold text-xl text-neutral-800 dark:text-neutral-200">
+          Login
+        </h2>
+        <Suspense fallback={<LoginFormFallback />}>
+          <LoginForm />
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/auth/signup/astrologer/page.tsx ---
+
+"use client";
+import React, { useState } from "react";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAppDispatch, useAppSelector } from "@/redux/hooks";
+import { signupAstrologer, selectLoading, selectError } from "@/redux/userSlice";
+import { motion, AnimatePresence } from "framer-motion";
+
+const LabelInputContainer = ({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) => {
+  return (
+    <div className={cn("flex flex-col space-y-2 w-full", className)}>
+      {children}
+    </div>
+  );
+};
+
+export default function SignupPage() {
+  const [step, setStep] = useState(1);
+
+  const [name, setname] = useState("");
+  const [username, setusername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [languages, setLanguages] = useState("");
+  const [experience, setExperience] = useState("");
+  const [costPerMinute, setCostPerMinute] = useState("");
+  const [about, setAbout] = useState("");
+
+  const dispatch = useAppDispatch();
+  const router = useRouter();
+  const loading = useAppSelector(selectLoading);
+  const error = useAppSelector(selectError);
+
+  const handleNextStep = () => {
+    setStep((prev) => prev + 1);
+  };
+
+  const handlePreviousStep = () => {
+    setStep((prev) => prev - 1);
+  };
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const languagesArray = languages.split(",").map((lang) => lang.trim());
+
+    const resultAction = await dispatch(
+      signupAstrologer({
+        name,
+        username,
+        email,
+        password,
+        languages: languagesArray,
+        experience: Number(experience),
+        costPerMinute: Number(costPerMinute),
+        about,
+      })
+    );
+
+    if (signupAstrologer.fulfilled.match(resultAction)) {
+      router.push("/auth/login");
+    }
+  };
+
+  const variants = {
+    initial: { opacity: 0, x: -20 },
+    enter: { opacity: 1, x: 0, transition: { duration: 0.4 } },
+    exit: { opacity: 0, x: 20, transition: { duration: 0.4 } },
+  };
+
+  return (
+    <div className="h-[100vh] flex items-center">
+      <div className="max-w-md w-full mx-auto rounded-none md:rounded-2xl p-4 md:p-8 shadow-input bg-white dark:bg-black">
+        <h2 className="font-bold text-xl text-neutral-800 dark:text-neutral-200">
+          Sign Up As Astrologer
+        </h2>
+
+        <form className="my-8" onSubmit={handleSubmit}>
+          <AnimatePresence mode="wait">
+            {step === 1 && (
+              <motion.div
+                key="step1"
+                variants={variants}
+                initial="initial"
+                animate="enter"
+                exit="exit"
+              >
+                <div className="flex flex-col space-y-4">
+                  <LabelInputContainer>
+                    <Label htmlFor="name">Name</Label>
+                    <Input
+                      id="name"
+                      placeholder="Tyler"
+                      type="text"
+                      value={name}
+                      onChange={(e) => setname(e.target.value)}
+                    />
+                  </LabelInputContainer>
+                  <LabelInputContainer>
+                    <Label htmlFor="username">Username</Label>
+                    <Input
+                      id="username"
+                      placeholder="Durden"
+                      type="text"
+                      value={username}
+                      onChange={(e) => setusername(e.target.value)}
+                    />
+                  </LabelInputContainer>
+                  <LabelInputContainer>
+                    <Label htmlFor="email">Email Address</Label>
+                    <Input
+                      id="email"
+                      placeholder="projectmayhem@fc.com"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </LabelInputContainer>
+                  <LabelInputContainer>
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      id="password"
+                      placeholder="••••••••"
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </LabelInputContainer>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleNextStep}
+                  className="mt-4 w-full bg-black text-white py-2 rounded-md"
+                >
+                  Next Step →
+                </button>
+              </motion.div>
+            )}
+
+            {step === 2 && (
+              <motion.div
+                key="step2"
+                variants={variants}
+                initial="initial"
+                animate="enter"
+                exit="exit"
+              >
+                <div className="flex flex-col space-y-4">
+                  <LabelInputContainer>
+                    <Label htmlFor="languages">Languages (comma separated)</Label>
+                    <Input
+                      id="languages"
+                      placeholder="English, Hindi"
+                      type="text"
+                      value={languages}
+                      onChange={(e) => setLanguages(e.target.value)}
+                    />
+                  </LabelInputContainer>
+                  <LabelInputContainer>
+                    <Label htmlFor="experience">Experience (Years)</Label>
+                    <Input
+                      id="experience"
+                      placeholder="5"
+                      type="number"
+                      value={experience}
+                      onChange={(e) => setExperience(e.target.value)}
+                    />
+                  </LabelInputContainer>
+                  <LabelInputContainer>
+                    <Label htmlFor="costPerMinute">Cost Per Minute</Label>
+                    <Input
+                      id="costPerMinute"
+                      placeholder="50"
+                      type="number"
+                      value={costPerMinute}
+                      onChange={(e) => setCostPerMinute(e.target.value)}
+                    />
+                  </LabelInputContainer>
+                  <LabelInputContainer>
+                    <Label htmlFor="about">About</Label>
+                    <Input
+                      id="about"
+                      placeholder="I am an experienced astrologer..."
+                      type="text"
+                      value={about}
+                      onChange={(e) => setAbout(e.target.value)}
+                    />
+                  </LabelInputContainer>
+                </div>
+                <div className="flex justify-between mt-4">
+                  <button
+                    type="button"
+                    onClick={handlePreviousStep}
+                    className="bg-gray-300 text-black py-2 px-4 rounded-md"
+                  >
+                    ← Previous Step
+                  </button>
+                  <button
+                    type="submit"
+                    className="bg-black text-white py-2 px-4 rounded-md"
+                    disabled={loading}
+                  >
+                    {loading ? "Signing up..." : "Sign Up →"}
+                  </button>
+                </div>
+                {error && (
+                  <p className="text-red-500 mt-4 text-sm">{error}</p>
+                )}
+
+                
+              </motion.div>
+            )}
+          </AnimatePresence><div className="text-center p-2 text-blue-500 mt-4">
+                  <Link href="/auth/login">Login Instead</Link>
+                </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+
+--- File: /home/sk/Desktop/JyotishConnect/client/app/auth/signup/user/page.tsx ---
+
+"use client";
+import React, { useState } from "react";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAppDispatch, useAppSelector } from "@/redux/hooks"; 
+import { signupUser, selectLoading, selectError } from "@/redux/userSlice";
+
+// Reusable container
+const LabelInputContainer = ({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) => {
+  return (
+    <div className={cn("flex flex-col space-y-2 w-full", className)}>
+      {children}
+    </div>
+  );
+};
+
+export default function SignupPage() {
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName]   = useState("");
+  const [email, setEmail]         = useState("");
+  const [password, setPassword]   = useState("");
+
+  const dispatch = useAppDispatch();
+  const router   = useRouter();
+  const loading  = useAppSelector(selectLoading);
+  const error    = useAppSelector(selectError);
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    // Dispatch signup
+    const resultAction = await dispatch(
+      signupUser({ firstName, lastName, email, password })
+    );
+    if (signupUser.fulfilled.match(resultAction)) {
+      // On success, you can redirect to home, login, or a “dashboard”
+      router.push("/auth/login");
+    }
+  };
+
+  return (
+    <div className="h-[100vh] flex items-center">
+      <div className="max-w-md w-full mx-auto rounded-none md:rounded-2xl p-4 md:p-8 shadow-input bg-white dark:bg-black">
+        <h2 className="font-bold text-xl text-neutral-800 dark:text-neutral-200">
+          Sign Up As User
+        </h2>
+
+        <form className="my-8" onSubmit={handleSubmit}>
+          <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-2 mb-4">
+            <LabelInputContainer>
+              <Label htmlFor="firstname">First name</Label>
+              <Input
+                id="firstname"
+                placeholder="Tyler"
+                type="text"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+              />
+            </LabelInputContainer>
+            <LabelInputContainer>
+              <Label htmlFor="lastname">Last name</Label>
+              <Input
+                id="lastname"
+                placeholder="Durden"
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+              />
+            </LabelInputContainer>
+          </div>
+
+          <LabelInputContainer className="mb-4">
+            <Label htmlFor="email">Email Address</Label>
+            <Input
+              id="email"
+              placeholder="projectmayhem@fc.com"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </LabelInputContainer>
+          <LabelInputContainer className="mb-4">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              placeholder="••••••••"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </LabelInputContainer>
+
+          {error && (
+            <p className="text-red-500 mb-4 text-sm">
+              {error}
+            </p>
+          )}
+
+          <button
+            className="relative group/btn bg-black bg-opacity-85 dark:from-zinc-900
+                       dark:to-zinc-900 to-neutral-600 block dark:bg-zinc-800
+                       w-full text-white rounded-md h-10 font-medium"
+            type="submit"
+            disabled={loading}
+          >
+            {loading ? "Signing up..." : "Sign Up →"}
+          </button>
+
+          <div className="text-center p-2 text-blue-500 ">
+            <Link href="/auth/login">Login Instead</Link>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+
